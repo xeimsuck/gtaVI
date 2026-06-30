@@ -1,0 +1,8 @@
+node_modules/
+*.log
+profiles.json
+test_profiles.json
+.DS_Store
+.env
+boot*.log
+server-run.log

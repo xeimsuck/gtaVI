@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>VICE 3D</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="menu">
+  <div class="card">
+    <div class="logo">VICE <span>3D</span></div>
+    <div class="sub">drive · shoot · mess around with friends</div>
+    <label>NAME</label>
+    <input id="name" maxlength="14" placeholder="Tommy" autocomplete="off" />
+    <label>COLOR</label>
+    <div id="colors"></div>
+    <button id="play">PLAY</button>
+    <div class="online">online: <b id="online">…</b></div>
+    <div class="keys"><b>WASD</b> move/drive · <b>Mouse</b> look · <b>Hold LMB</b> aim+shoot · <b>1–4</b> weapons<br><b>F</b> enter/exit car · <b>V</b> 1st/3rd person · <b>Shift</b> run · <b>Space</b> handbrake · <b>Enter</b> chat · <b>Tab</b> scores</div>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="crosshair"></div>
+  <div id="hitmark"></div>
+  <div id="topbar"><div id="hpwrap"><div id="hp"></div></div><div id="kills">Kills: 0</div>
+    <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div></div>
+  <div id="weaponbox"><div id="wicon">🔫</div><div class="wt"><div id="wname">Pistol</div><div id="wammo">∞</div></div></div>
+  <div id="notice"></div>
+  <div id="dead"><div class="big">WASTED</div><div class="small">respawning…</div></div>
+  <div id="scores"></div>
+  <div id="chatlog"></div>
+  <input id="chatinput" maxlength="160" placeholder="say something… (Enter)" autocomplete="off" />
+  <div id="hint">F — enter car</div>
+  <div id="click2play">click to look around</div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

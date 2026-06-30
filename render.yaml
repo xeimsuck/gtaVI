@@ -1,0 +1,22 @@
+# Render.com Blueprint — one-click deploy.
+# In Render: New + -> "Blueprint" -> connect this repo. Render reads this
+# file, builds, and gives you a public https URL you can share with friends.
+services:
+  - type: web
+    name: vice-online
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Your SECRET cheat key. Pick anything — only you should know it.
+      # (sync:false means Render will ask you for it on deploy.)
+      - key: OWNER_KEY
+        sync: false
+      # Change the seed for a different city layout.
+      - key: WORLD_SEED
+        value: "1337"
+      - key: NODE_VERSION
+        value: "20"

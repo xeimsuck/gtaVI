@@ -1,0 +1,26 @@
+{
+  "name": "vice-online",
+  "version": "1.0.0",
+  "description": "Vice Online — a GTA VI-inspired browser multiplayer open-world game. Three.js client + authoritative Node.js WebSocket server.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "share": "concurrently -k -n SERVER,TUNNEL -c green,cyan \"node server/index.js\" \"cloudflared tunnel --protocol http2 --url http://localhost:3000\"",
+    "share:lt": "concurrently -k -n SERVER,TUNNEL -c green,magenta \"node server/index.js\" \"lt --port 3000\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "cloudflared": "^0.7.1",
+    "concurrently": "^9.1.2",
+    "localtunnel": "^2.0.2"
+  },
+  "license": "MIT"
+}

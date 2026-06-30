@@ -1,0 +1,22 @@
+# Fly.io config. Deploy with:  fly launch --copy-config --now
+app = "vice-online"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+
+[env]
+  WORLD_SEED = "1337"
+  # set your secret cheat key with:  fly secrets set OWNER_KEY=your-secret
