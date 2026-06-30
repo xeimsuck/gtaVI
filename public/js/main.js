@@ -97,12 +97,21 @@ const SENS = 0.0024;
 
 function spawnMe(x, z) { me.pos.set(x, 0, z); me.alive = true; me.hp = 100; if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = true; camPivot = null; }
 
-let fDown = false, vDown = false;
+let fDown = false, vDown = false, mDown = false, mapOpen = false;
 function toggleCar() {
-  if (me.inCar) { const c = me.inCar; c.occupant = null; me.pos.set(c.x + Math.cos(c.heading + Math.PI / 2) * 2.4, 0, c.z + Math.sin(c.heading + Math.PI / 2) * 2.4); me.inCar = null; me.char.group.visible = true; engine(0); return; }
-  let best = null, bd = 5;
-  for (const c of cars) { if (c.occupant) continue; const d = Math.hypot(c.x - me.pos.x, c.z - me.pos.z); if (d < bd) { bd = d; best = c; } }
+  if (me.inCar) { const c = me.inCar; c.occupant = null; me.pos.set(c.x + Math.cos(c.heading + Math.PI / 2) * 2.6, 0, c.z + Math.sin(c.heading + Math.PI / 2) * 2.6); me.inCar = null; me.char.group.visible = !me.fp; engine(0); return; }
+  let best = null, bd = 6, bestT = null;
+  for (const c of cars) { if (c.occupant) continue; const d = Math.hypot(c.x - me.pos.x, c.z - me.pos.z); if (d < bd) { bd = d; best = c; bestT = null; } }
+  for (const t of traffic) { const d = Math.hypot(t.x - me.pos.x, t.z - me.pos.z); if (d < bd) { bd = d; bestT = t; best = null; } } // jack any moving car too
+  if (bestT) best = jackTraffic(bestT);
   if (best) { best.occupant = 'me'; me.inCar = best; me.char.group.visible = false; }
+}
+function jackTraffic(t) {
+  const heading = t.axis === 'x' ? (t.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (t.dir > 0 ? 0 : Math.PI);
+  const c = { group: t.car.group, wheels: t.car.wheels, x: t.x, z: t.z, heading, speed: 0, vx: 0, vz: 0, colHex: t.colHex || 0xcccccc, occupant: null, roll: 0, pitch: 0 };
+  const i = traffic.indexOf(t); if (i >= 0) traffic.splice(i, 1);
+  cars.push(c);
+  return c;
 }
 
 function driveCar(c, dt) {
@@ -174,6 +183,7 @@ function updatePlayer(dt) {
   mouseHeld = mouse.down;
   if (keys.has('KeyF') && !fDown) { fDown = true; toggleCar(); } if (!keys.has('KeyF')) fDown = false;
   if (keys.has('KeyV') && !vDown) { vDown = true; me.fp = !me.fp; } if (!keys.has('KeyV')) vDown = false;
+  if (keys.has('KeyM') && !mDown) { mDown = true; toggleMap(); } if (!keys.has('KeyM')) mDown = false;
   updateCamera(dt);
 }
 
@@ -182,7 +192,7 @@ function updateCamera(dt) {
   if (me.fp && !me.inCar) {
     const cp0 = Math.cos(camPitch), sp0 = Math.sin(camPitch);
     const look0 = new THREE.Vector3(Math.sin(camYaw) * cp0, sp0, Math.cos(camYaw) * cp0);
-    const eye = new THREE.Vector3(me.pos.x, 1.62, me.pos.z).addScaledVector(look0, 0.12);
+    const eye = new THREE.Vector3(me.pos.x, me.pos.y + 1.62, me.pos.z).addScaledVector(look0, 0.12);
     camera.position.copy(eye);
     camera.lookAt(eye.x + look0.x, eye.y + look0.y, eye.z + look0.z);
     sun.position.set(me.pos.x + 80, 130, me.pos.z + 40); sun.target.position.set(me.pos.x, 0, me.pos.z);
@@ -192,7 +202,7 @@ function updateCamera(dt) {
   const baseH = me.inCar ? 4.5 : 3.2;          // camera height ABOVE the player
   const headY = me.inCar ? 1.2 : 1.4;
   const right = new THREE.Vector3(-Math.cos(camYaw), 0, Math.sin(camYaw));
-  const truePivot = new THREE.Vector3(me.pos.x, headY, me.pos.z).addScaledVector(right, me.inCar ? 0 : 0.55);
+  const truePivot = new THREE.Vector3(me.pos.x, me.pos.y + headY, me.pos.z).addScaledVector(right, me.inCar ? 0 : 0.55);
   if (!camPivot || camPivot.distanceToSquared(truePivot) > 400) camPivot = truePivot.clone();
   camPivot.x = THREE.MathUtils.lerp(camPivot.x, truePivot.x, 0.5);
   camPivot.z = THREE.MathUtils.lerp(camPivot.z, truePivot.z, 0.5);
@@ -325,9 +335,9 @@ const TCOL = [0xe74c3c, 0x2980b9, 0x27ae60, 0xf1c40f, 0xecf0f1, 0x34495e, 0xe67e
 (function spawnTraffic() {
   for (let i = 0; i < 12; i++) {
     const onX = Math.random() < 0.5, lane = Math.max(1, (Math.random() * (WORLD.GRID - 1) | 0)) * WORLD.BLOCK, o = Math.random() * WORLD.SIZE;
-    const car = makeCar(TCOL[i % TCOL.length]); const x = onX ? o : lane, z = onX ? lane : o;
+    const colHex = TCOL[i % TCOL.length]; const car = makeCar(colHex); const x = onX ? o : lane, z = onX ? lane : o;
     car.group.position.set(x, 0, z); scene.add(car.group);
-    traffic.push({ car, x, z, axis: onX ? 'x' : 'z', dir: Math.random() < 0.5 ? 1 : -1, lane, speed: 8 + Math.random() * 8, turnT: 2 + Math.random() * 4 });
+    traffic.push({ car, colHex, x, z, axis: onX ? 'x' : 'z', dir: Math.random() < 0.5 ? 1 : -1, lane, speed: 8 + Math.random() * 8, turnT: 2 + Math.random() * 4 });
   }
 })();
 function updateTraffic(dt) {
@@ -456,6 +466,32 @@ function engine(level) { if (!AC) return; if (level > 0.01 && !eng) { const o = 
 
 // ---------- HUD ----------
 const $ = id => document.getElementById(id);
+// ---- map (M) ----
+const mapcv = document.getElementById('map'), mctx = mapcv.getContext('2d');
+function toggleMap() { mapOpen = !mapOpen; $('map').classList.toggle('show', mapOpen); $('maphint').classList.toggle('show', mapOpen); if (mapOpen) { mapcv.width = innerWidth; mapcv.height = innerHeight; document.exitPointerLock(); } }
+addEventListener('keydown', e => { if (e.code === 'Escape' && mapOpen) toggleMap(); });
+function drawMap() {
+  const W = mapcv.width, H = mapcv.height, S = WORLD.SIZE, margin = 70;
+  const scale = Math.min(W - margin * 2, H - margin * 2) / S;
+  const ox = (W - S * scale) / 2, oy = (H - S * scale) / 2;
+  const tx = wx => ox + wx * scale, tz = wz => oy + wz * scale;
+  mctx.fillStyle = 'rgba(8,12,18,.92)'; mctx.fillRect(0, 0, W, H);
+  mctx.fillStyle = '#1c5e7a'; mctx.fillRect(ox - 50, oy - 50, S * scale + 100, S * scale + 100);
+  mctx.fillStyle = '#cbb98a'; mctx.fillRect(ox - 22 * scale, oy - 22 * scale, (S + 44) * scale, (S + 44) * scale);
+  mctx.fillStyle = '#2b2e36'; mctx.fillRect(ox, oy, S * scale, S * scale);
+  mctx.strokeStyle = 'rgba(255,255,255,.06)'; mctx.lineWidth = 1;
+  for (let g = 0; g <= WORLD.GRID; g++) { const c = g * WORLD.BLOCK; mctx.beginPath(); mctx.moveTo(tx(c), oy); mctx.lineTo(tx(c), oy + S * scale); mctx.stroke(); mctx.beginPath(); mctx.moveTo(ox, tz(c)); mctx.lineTo(ox + S * scale, tz(c)); mctx.stroke(); }
+  mctx.fillStyle = '#565b6b'; for (const b of buildings) mctx.fillRect(tx(b.x - b.w / 2), tz(b.z - b.d / 2), Math.max(1, b.w * scale), Math.max(1, b.d * scale));
+  mctx.fillStyle = '#dfe4ec'; for (const c of cars) if (!c.occupant) mctx.fillRect(tx(c.x) - 2, tz(c.z) - 2, 4, 4);
+  mctx.fillStyle = '#aab2c0'; for (const t of traffic) mctx.fillRect(tx(t.x) - 2, tz(t.z) - 2, 4, 4);
+  mctx.fillStyle = '#7aa86a'; for (const p of peds) if (p.alive) mctx.fillRect(tx(p.x) - 1.5, tz(p.z) - 1.5, 3, 3);
+  mctx.fillStyle = '#3a7bff'; for (const c of cops) { mctx.beginPath(); mctx.arc(tx(c.x), tz(c.z), 4, 0, Math.PI * 2); mctx.fill(); }
+  for (const r of remotes.values()) { if (!r.alive) continue; mctx.fillStyle = r.color || '#fff'; mctx.beginPath(); mctx.arc(tx(r.dx), tz(r.dz), 5, 0, Math.PI * 2); mctx.fill(); }
+  const a = Math.atan2(Math.cos(me.heading), Math.sin(me.heading));
+  mctx.save(); mctx.translate(tx(me.pos.x), tz(me.pos.z)); mctx.rotate(a);
+  mctx.fillStyle = '#fff'; mctx.beginPath(); mctx.moveTo(9, 0); mctx.lineTo(-6, 6); mctx.lineTo(-3, 0); mctx.lineTo(-6, -6); mctx.closePath(); mctx.fill();
+  mctx.restore();
+}
 function flash() { document.body.classList.add('hurt'); setTimeout(() => document.body.classList.remove('hurt'), 120); }
 function hitMark() { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); }
 function notice(t) { const e = $('notice'); e.textContent = t; e.classList.add('show'); setTimeout(() => e.classList.remove('show'), 2200); }
@@ -468,7 +504,8 @@ function updateHud() {
   $('wicon').textContent = w.icon; $('wname').textContent = w.name;
   $('wammo').textContent = me.ammo[me.weapon] === Infinity ? '∞' : (me.ammo[me.weapon] | 0);
   const sc = $('stars').children; for (let i = 0; i < sc.length; i++) sc[i].classList.toggle('on', i < me.wanted);
-  let near = false; if (!me.inCar) for (const c of cars) if (!c.occupant && Math.hypot(c.x - me.pos.x, c.z - me.pos.z) < 5) { near = true; break; }
+  let near = false;
+  if (!me.inCar) { for (const c of cars) if (!c.occupant && Math.hypot(c.x - me.pos.x, c.z - me.pos.z) < 6) { near = true; break; } if (!near) for (const t of traffic) if (Math.hypot(t.x - me.pos.x, t.z - me.pos.z) < 6) { near = true; break; } }
   const hint = $('hint'); hint.style.display = (me.inCar || near) ? 'block' : 'none'; hint.textContent = me.inCar ? 'F — exit car' : 'F — enter car';
   if (keys.has('Tab')) { renderScores(); $('scores').classList.add('show'); } else $('scores').classList.remove('show');
 }
@@ -495,10 +532,10 @@ let menuA = 0;
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, clock.getDelta());
-  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updatePickups(dt); updateWanted(dt); updateRemotes(dt); updateFx(dt); netTick(dt); updateHud(); }
+  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updatePickups(dt); updateWanted(dt); updateRemotes(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); }
   else { menuA += dt * 0.1; camera.position.set(WORLD.SIZE / 2 + Math.cos(menuA) * 90, 70, WORLD.SIZE / 2 + Math.sin(menuA) * 90); camera.lookAt(WORLD.SIZE / 2, 8, WORLD.SIZE / 2); updateFx(dt); }
   renderer.render(scene, camera);
 }
 spawnPickups();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, crime, render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, crime, toggleMap, drawMap, mapcv, render: () => renderer.render(scene, camera) };
