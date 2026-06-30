@@ -3,7 +3,7 @@
 //  Drive, shoot, mess around with friends. Browser + WebSocket relay.
 // =====================================================================
 import * as THREE from 'three';
-import { makeCity, makeCar, makeChar, WORLD } from './build.js';
+import { makeCity, makeCar, makeChar, makeBike, makeHeli, makeRocket, WORLD } from './build.js';
 
 // ---------- renderer / scene ----------
 const canvas = document.getElementById('gl');
@@ -55,9 +55,30 @@ const cars = [];
     const colHex = CARC[i % CARC.length];
     const c = makeCar(colHex);
     c.x = sp.x + (r() - 0.5) * 8; c.z = sp.z + 16; c.heading = Math.round(r() * 4) * Math.PI / 2;
-    c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = colHex; c.occupant = null; c.roll = 0; c.pitch = 0;
+    c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = colHex; c.occupant = null; c.roll = 0; c.pitch = 0; c.type = 'car';
     c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.heading;
     scene.add(c.group); cars.push(c);
+  }
+})();
+// ---------- motorcycles ----------
+(function spawnBikes() {
+  const r = () => Math.random();
+  for (let i = 0; i < 9; i++) {
+    const sp = city.spawns[(r() * city.spawns.length) | 0] || { x: 80, z: 80 };
+    const colHex = CARC[(i * 3) % CARC.length];
+    const b = makeBike(colHex);
+    b.x = sp.x + (r() - 0.5) * 12; b.z = sp.z - 14; b.heading = Math.round(r() * 4) * Math.PI / 2;
+    b.speed = 0; b.vx = 0; b.vz = 0; b.colHex = colHex; b.occupant = null; b.roll = 0; b.pitch = 0; b.type = 'bike';
+    b.group.position.set(b.x, 0, b.z); b.group.rotation.y = b.heading;
+    scene.add(b.group); cars.push(b);
+  }
+})();
+// ---------- helicopters ----------
+(function spawnHelis() {
+  for (const s of [{ x: 60, z: 60 }, { x: WORLD.SIZE - 60, z: WORLD.SIZE - 60 }, { x: WORLD.SIZE / 2, z: WORLD.SIZE / 2 }]) {
+    const h = makeHeli(0x2c3e57);
+    h.x = s.x; h.z = s.z; h.y = 0; h.heading = 0; h.speed = 0; h.vx = 0; h.vz = 0; h.colHex = 0x2c3e57; h.occupant = null; h.roll = 0; h.pitch = 0; h.type = 'heli'; h.rotorSpin = 0;
+    h.group.position.set(h.x, 0, h.z); scene.add(h.group); cars.push(h);
   }
 })();
 
@@ -81,17 +102,22 @@ const WEAPONS = {
   smg: { name: 'SMG', dmg: 11, rof: 0.075, auto: true, spread: 0.03, pellets: 1, icon: '🧨' },
   shotgun: { name: 'Shotgun', dmg: 8, rof: 0.7, auto: false, spread: 0.07, pellets: 7, icon: '💥' },
   rifle: { name: 'Rifle', dmg: 24, rof: 0.12, auto: true, spread: 0.015, pellets: 1, icon: '🪖' },
+  rpg: { name: 'RPG', dmg: 120, rof: 1.1, auto: false, spread: 0, pellets: 1, icon: '🚀', rocket: true },
 };
-const WORDER = ['pistol', 'smg', 'shotgun', 'rifle'];
+const WORDER = ['pistol', 'smg', 'shotgun', 'rifle', 'rpg'];
 const me = {
   id: null, name: 'Player', colorHex: 0x3aa0ff,
   pos: new THREE.Vector3(60, 0, 40), heading: 0, vy: 0, onGround: true,
   hp: 100, alive: true, kills: 0, inCar: null, aiming: false, walkT: 0, shootCd: 0, fp: false,
-  weapon: 'pistol', ammo: { pistol: Infinity, smg: 0, shotgun: 0, rifle: 0 },
+  weapon: 'pistol', ammo: { pistol: Infinity, smg: 0, shotgun: 0, rifle: 0, rpg: 0 },
   wanted: 0, heat: 0, lastCrime: 0,
+  look: { shirt: '#3aa0ff', skin: '#e0ac69', hair: '#20140d', pants: '#2c3e50', hat: false },
   char: null,
 };
-me.char = makeChar(me.colorHex); scene.add(me.char.group);
+const hx2i = v => (v ? parseInt(v.slice(1), 16) : undefined);
+function charFromLook(lk, fallback) { lk = lk || {}; return makeChar(hx2i(lk.shirt) ?? hx2i(fallback) ?? 0x3aa0ff, { skin: hx2i(lk.skin), hair: hx2i(lk.hair), pants: hx2i(lk.pants), hat: !!lk.hat }); }
+function buildChar() { return charFromLook(me.look); }
+me.char = buildChar(); scene.add(me.char.group);
 let camYaw = 0, camPitch = 0.3, camPivot = null;
 const SENS = 0.0024;
 
@@ -99,7 +125,7 @@ function spawnMe(x, z) { me.pos.set(x, 0, z); me.alive = true; me.hp = 100; if (
 
 let fDown = false, vDown = false, mDown = false, mapOpen = false;
 function toggleCar() {
-  if (me.inCar) { const c = me.inCar; c.occupant = null; me.pos.set(c.x + Math.cos(c.heading + Math.PI / 2) * 2.6, 0, c.z + Math.sin(c.heading + Math.PI / 2) * 2.6); me.inCar = null; me.char.group.visible = !me.fp; engine(0); return; }
+  if (me.inCar) { const c = me.inCar; c.occupant = null; const ox = Math.cos(c.heading + Math.PI / 2) * 2.6, oz = Math.sin(c.heading + Math.PI / 2) * 2.6; me.pos.set(c.x + ox, c.type === 'heli' ? c.y : 0, c.z + oz); if (c.type === 'heli') { me.vy = 0; me.onGround = c.y < 0.5; } me.inCar = null; me.char.group.visible = !me.fp; resetPose(); engine(); return; }
   let best = null, bd = 6, bestT = null;
   for (const c of cars) { if (c.occupant) continue; const d = Math.hypot(c.x - me.pos.x, c.z - me.pos.z); if (d < bd) { bd = d; best = c; bestT = null; } }
   for (const t of traffic) { const d = Math.hypot(t.x - me.pos.x, t.z - me.pos.z); if (d < bd) { bd = d; bestT = t; best = null; } } // jack any moving car too
@@ -108,7 +134,7 @@ function toggleCar() {
 }
 function jackTraffic(t) {
   const heading = t.axis === 'x' ? (t.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (t.dir > 0 ? 0 : Math.PI);
-  const c = { group: t.car.group, wheels: t.car.wheels, x: t.x, z: t.z, heading, speed: 0, vx: 0, vz: 0, colHex: t.colHex || 0xcccccc, occupant: null, roll: 0, pitch: 0 };
+  const c = { group: t.car.group, wheels: t.car.wheels, x: t.x, z: t.z, heading, speed: 0, vx: 0, vz: 0, colHex: t.colHex || 0xcccccc, occupant: null, roll: 0, pitch: 0, type: 'car' };
   const i = traffic.indexOf(t); if (i >= 0) traffic.splice(i, 1);
   cars.push(c);
   return c;
@@ -118,28 +144,85 @@ function driveCar(c, dt) {
   const fwd = new THREE.Vector3(Math.sin(c.heading), 0, Math.cos(c.heading));
   const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
   let vF = c.vx * fwd.x + c.vz * fwd.z, vL = c.vx * right.x + c.vz * right.z;
+  const bike = c.type === 'bike';
   const thr = axisY(), steer = axisX(), hb = keys.has('Space');
-  const accel = me.turbo ? 72 : 34, top = me.turbo ? 92 : 46, rev = 18;
+  const accel = (me.turbo ? 72 : 34) * (bike ? 1.25 : 1), top = (me.turbo ? 92 : 46) * (bike ? 1.15 : 1), rev = 18;
   if (thr > 0) vF += accel * dt; else if (thr < 0) vF -= accel * 0.7 * dt;
-  if (hb) vF -= vF * 2.2 * dt;
+  if (hb) vF -= vF * 0.8 * dt;                        // SPACE = handbrake drift: keep speed, break grip
   vF -= vF * (thr === 0 ? 0.7 : 0.12) * dt;
   vF = Math.max(-rev, Math.min(top, vF));
-  const grip = hb ? 1.5 : 7;
+  const grip = hb ? 1.0 : (bike ? 8 : 7);
   vL -= vL * Math.min(1, grip * dt);
   c.vx = fwd.x * vF + right.x * vL; c.vz = fwd.z * vF + right.z * vL;
   const sf = Math.max(-1, Math.min(1, vF / 6));
-  c.heading -= steer * 2.4 * dt * sf;
+  c.heading -= steer * (bike ? 2.8 : 2.4) * dt * sf;
   c.speed = vF; c.drift = Math.min(1, Math.abs(vL) / 6);
   let nx = c.x + c.vx * dt, nz = c.z + c.vz * dt;
   [nx, nz] = resolve(nx, nz, 1.6);
   if (Math.hypot(nx - c.x, nz - c.z) < Math.hypot(c.vx, c.vz) * dt * 0.5) { c.vx *= 0.3; c.vz *= 0.3; }
   c.x = Math.max(2, Math.min(WORLD.SIZE - 2, nx)); c.z = Math.max(2, Math.min(WORLD.SIZE - 2, nz));
-  c.roll = THREE.MathUtils.lerp(c.roll, steer * sf * 0.12, 0.2);
+  c.roll = THREE.MathUtils.lerp(c.roll, steer * sf * (bike ? 0.5 : 0.12), 0.2);
   c.pitch = THREE.MathUtils.lerp(c.pitch, -thr * 0.05, 0.15);
   c.group.position.set(c.x, 0, c.z);
   c.group.rotation.set(c.pitch, c.heading, c.roll);
   for (const w of c.wheels) w.rotation.x += vF * dt * 2;
 }
+
+// ---- helicopter ----
+function driveHeli(c, dt) {
+  c.rotorSpin = (c.rotorSpin || 0) + dt * 32;
+  if (c.rotor) c.rotor.rotation.y = c.rotorSpin;
+  if (c.trotor) c.trotor.rotation.x = c.rotorSpin;
+  const up = (keys.has('Space') ? 1 : 0) - ((keys.has('ShiftLeft') || keys.has('ControlLeft')) ? 1 : 0);
+  c.y = THREE.MathUtils.clamp((c.y || 0) + up * 15 * dt, 0, 90);
+  const thr = axisY(), steer = axisX();
+  c.heading -= steer * 1.5 * dt;
+  const power = c.y > 1.2 ? 1 : 0.12;                 // can only really fly once off the ground
+  const fx = Math.sin(c.heading), fz = Math.cos(c.heading);
+  c.vx += (fx * thr * 30 * power - c.vx) * Math.min(1, dt * 1.6);
+  c.vz += (fz * thr * 30 * power - c.vz) * Math.min(1, dt * 1.6);
+  c.vx *= 1 - dt * 0.55; c.vz *= 1 - dt * 0.55;
+  c.x = THREE.MathUtils.clamp(c.x + c.vx * dt, 4, WORLD.SIZE - 4);
+  c.z = THREE.MathUtils.clamp(c.z + c.vz * dt, 4, WORLD.SIZE - 4);
+  c.pitch = THREE.MathUtils.lerp(c.pitch || 0, -thr * 0.22, 0.1);
+  c.roll = THREE.MathUtils.lerp(c.roll || 0, -steer * 0.3, 0.1);
+  c.speed = Math.hypot(c.vx, c.vz);
+  c.group.position.set(c.x, c.y, c.z);
+  c.group.rotation.set(c.pitch, c.heading, c.roll);
+}
+
+// ---- vehicle impacts: run people over + crash into other cars ----
+function vehicleHits(c, dt) {
+  const sp = Math.hypot(c.vx, c.vz);
+  if (sp > 4.5) for (const pd of peds) if (pd.alive && Math.hypot(pd.x - c.x, pd.z - c.z) < 2.2) { pd.die(); blood(new THREE.Vector3(pd.x, 1, pd.z)); crime(3); shake = Math.max(shake, 0.22); }
+  const rad = c.type === 'bike' ? 1.5 : 2.4;
+  for (const o of cars) {
+    if (o === c || o.type === 'heli') continue;
+    const dx = o.x - c.x, dz = o.z - c.z, d = Math.hypot(dx, dz) || 1, minD = rad + (o.type === 'bike' ? 1.5 : 2.4);
+    if (d < minD) { const nx = dx / d, nz = dz / d, push = minD - d; o.x += nx * push; o.z += nz * push; o.vx = (o.vx || 0) + nx * sp * 0.6; o.vz = (o.vz || 0) + nz * sp * 0.6; c.vx -= nx * sp * 0.3; c.vz -= nz * sp * 0.3; c.x -= nx * push * 0.4; c.z -= nz * push * 0.4; o.group.position.set(o.x, 0, o.z); if (sp > 6) { shake = Math.max(shake, 0.3); screech(); } }
+  }
+  for (const t of traffic) {
+    const dx = t.x - c.x, dz = t.z - c.z, d = Math.hypot(dx, dz) || 1, minD = rad + 2.4;
+    if (d < minD) { const nx = dx / d, nz = dz / d, push = minD - d; t.x += nx * push; t.z += nz * push; t.kx = nx * sp * 1.5; t.kz = nz * sp * 1.5; t.knockT = 0.7; c.vx -= nx * sp * 0.32; c.vz -= nz * sp * 0.32; if (sp > 6) { shake = Math.max(shake, 0.3); screech(); } }
+  }
+  for (const cp of cops) {
+    const dx = cp.x - c.x, dz = cp.z - c.z, d = Math.hypot(dx, dz) || 1, minD = rad + 2.4;
+    if (d < minD) { const nx = dx / d, nz = dz / d, push = minD - d; cp.x += nx * push; cp.z += nz * push; cp.vx = (cp.vx || 0) + nx * sp * 0.8; cp.vz = (cp.vz || 0) + nz * sp * 0.8; c.vx -= nx * sp * 0.3; c.vz -= nz * sp * 0.3; }
+  }
+  c.x = THREE.MathUtils.clamp(c.x, 2, WORLD.SIZE - 2); c.z = THREE.MathUtils.clamp(c.z, 2, WORLD.SIZE - 2);
+  c.group.position.x = c.x; c.group.position.z = c.z;
+}
+
+// ---- show the player as a rider sitting on a bike ----
+function showRider(c) {
+  me.char.group.visible = !me.fp;
+  me.char.group.position.set(c.x, 0.18, c.z);
+  me.char.group.rotation.set(0, c.heading, c.roll * 0.6);
+  const p = me.char.parts;
+  p.armL.rotation.set(-1.1, 0, 0.2); p.armR.rotation.set(-1.1, 0, -0.2);
+  p.legL.rotation.set(0.5, 0, 0.28); p.legR.rotation.set(0.5, 0, -0.28);
+}
+function resetPose() { const p = me.char.parts; p.armL.rotation.set(0, 0, 0); p.armR.rotation.set(0, 0, 0); p.legL.rotation.set(0, 0, 0); p.legR.rotation.set(0, 0, 0); }
 
 function updatePlayer(dt) {
   // mouse look
@@ -149,10 +232,18 @@ function updatePlayer(dt) {
 
   me.aiming = false;
   if (me.inCar) {
-    driveCar(me.inCar, dt);
-    me.pos.set(me.inCar.x, 0, me.inCar.z); me.heading = me.inCar.heading;
-    engine(Math.abs(me.inCar.speed) / 46);
-    if (me.inCar.drift > 0.5) screech();
+    const v = me.inCar;
+    if (v.type === 'heli') {
+      driveHeli(v, dt);
+      me.pos.set(v.x, v.y, v.z); me.heading = v.heading;
+      me.char.group.visible = false;
+    } else {
+      driveCar(v, dt);
+      vehicleHits(v, dt);
+      me.pos.set(v.x, 0, v.z); me.heading = v.heading;
+      if (v.drift > 0.5) screech();
+      if (v.type === 'bike') showRider(v); else me.char.group.visible = false;
+    }
   } else {
     const fwd = new THREE.Vector3(Math.sin(camYaw), 0, Math.cos(camYaw));
     const right = new THREE.Vector3(-Math.cos(camYaw), 0, Math.sin(camYaw)); // screen-right
@@ -173,7 +264,7 @@ function updatePlayer(dt) {
     me.char.setPose(me.walkT, moving, me.aiming);
     engine(0);
     // weapon switch (1-4, only owned)
-    for (let i = 0; i < 4; i++) if (keys.has('Digit' + (i + 1)) && (WORDER[i] === 'pistol' || me.ammo[WORDER[i]] > 0) && me.weapon !== WORDER[i]) { me.weapon = WORDER[i]; me.shootCd = 0; }
+    for (let i = 0; i < WORDER.length; i++) if (keys.has('Digit' + (i + 1)) && (WORDER[i] === 'pistol' || me.ammo[WORDER[i]] > 0) && me.weapon !== WORDER[i]) { me.weapon = WORDER[i]; me.shootCd = 0; }
     // shoot (rising-edge for semi-auto, held for auto)
     me.shootCd -= dt;
     const w = WEAPONS[me.weapon];
@@ -198,8 +289,9 @@ function updateCamera(dt) {
     sun.position.set(me.pos.x + 80, 130, me.pos.z + 40); sun.target.position.set(me.pos.x, 0, me.pos.z);
     return;
   }
-  const dist = me.inCar ? 11 : (me.aiming ? 5.5 : 7);
-  const baseH = me.inCar ? 4.5 : 3.2;          // camera height ABOVE the player
+  const heli = me.inCar && me.inCar.type === 'heli';
+  const dist = me.inCar ? (heli ? 17 : 11) : (me.aiming ? 5.5 : 7);
+  const baseH = me.inCar ? (heli ? 7 : 4.5) : 3.2;          // camera height ABOVE the player
   const headY = me.inCar ? 1.2 : 1.4;
   const right = new THREE.Vector3(-Math.cos(camYaw), 0, Math.sin(camYaw));
   const truePivot = new THREE.Vector3(me.pos.x, me.pos.y + headY, me.pos.z).addScaledVector(right, me.inCar ? 0 : 0.55);
@@ -248,7 +340,8 @@ function fire() {
   wray.set(camera.position, camDir); wray.far = 300;
   const cw = wray.intersectObject(city.group, true)[0];
   const aim = cw ? cw.point.clone() : camera.position.clone().addScaledVector(camDir, 250);
-  const origin = new THREE.Vector3(me.pos.x, me.fp ? 1.6 : 1.45, me.pos.z);
+  const origin = new THREE.Vector3(me.pos.x, me.pos.y + (me.fp ? 1.6 : 1.45), me.pos.z);
+  if (w.rocket) { fireRocket(origin, aim); me.shootCd = w.rof; shake = Math.max(shake, 0.3); gun(); net.send({ t: 'shot', x: origin.x, y: origin.z, a: camYaw }); return; }
   let any = false;
   for (let p = 0; p < w.pellets; p++) {
     const dir = aim.clone().sub(origin).normalize();
@@ -282,6 +375,43 @@ const sparkGeo = new THREE.SphereGeometry(0.08, 5, 4);
 function updateFx(dt) {
   for (let i = tracers.length - 1; i >= 0; i--) { tracers[i].life -= dt; if (tracers[i].life <= 0) { scene.remove(tracers[i].line); tracers[i].line.geometry.dispose(); tracers.splice(i, 1); } }
   for (let i = sparks.length - 1; i >= 0; i--) { const s = sparks[i]; s.userData.life -= dt; if (s.userData.life <= 0) { scene.remove(s); sparks.splice(i, 1); continue; } s.userData.v.y -= 14 * dt; s.position.addScaledVector(s.userData.v, dt); }
+}
+
+// ---------- rockets (RPG) ----------
+const rockets = [];
+function fireRocket(origin, aim) {
+  const dir = aim.clone().sub(origin).normalize();
+  const mesh = makeRocket(); mesh.position.copy(origin).addScaledVector(dir, 1.4); scene.add(mesh);
+  rockets.push({ mesh, pos: mesh.position.clone(), dir, speed: 58, life: 4 });
+}
+function updateRockets(dt) {
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const rk = rockets[i]; rk.life -= dt;
+    rk.pos.addScaledVector(rk.dir, rk.speed * dt);
+    rk.mesh.position.copy(rk.pos); rk.mesh.lookAt(rk.pos.clone().add(rk.dir));
+    if (Math.random() < 0.8) addSpark(rk.pos.clone(), 0x888888, 1, 1.2);
+    let hit = rk.life <= 0 || rk.pos.y <= 0.25;
+    const at = (x, y, z, r) => rk.pos.distanceToSquared(new THREE.Vector3(x, y, z)) < r * r;
+    if (!hit) for (const pd of peds) if (pd.alive && at(pd.x, 1, pd.z, 2)) { hit = true; break; }
+    if (!hit) for (const cp of cops) if (at(cp.x, 1.2, cp.z, 2.5)) { hit = true; break; }
+    if (!hit) for (const o of cars) if (o.occupant !== 'me' && o.type !== 'heli' && at(o.x, 1, o.z, 2.6)) { hit = true; break; }
+    if (!hit) for (const t of traffic) if (at(t.x, 1, t.z, 2.6)) { hit = true; break; }
+    if (!hit) for (const rp of remotes.values()) if (rp.alive && at(rp.dx, 1.2, rp.dz, 2)) { hit = true; break; }
+    if (!hit && rk.pos.y < 28 && insideBuilding(rk.pos.x, rk.pos.z)) hit = true;
+    if (hit) { explode(rk.pos.clone()); scene.remove(rk.mesh); rockets.splice(i, 1); }
+  }
+}
+function explode(p) {
+  const R = 9;
+  addSpark(p, 0xffaa33, 28, 17); addSpark(p, 0x552200, 16, 8); addSpark(p, 0xffe066, 14, 11);
+  const fl = new THREE.PointLight(0xffaa44, 9, 34); fl.position.copy(p); scene.add(fl); setTimeout(() => scene.remove(fl), 130);
+  shake = Math.max(shake, 0.6); boom(p);
+  for (const pd of peds) if (pd.alive && Math.hypot(pd.x - p.x, pd.z - p.z) < R) { pd.die(); crime(2); }
+  for (const cp of [...cops]) if (Math.hypot(cp.x - p.x, cp.z - p.z) < R) { cp.hp -= 120; crime(1); if (cp.hp <= 0) killCop(cp); }
+  for (const t of [...traffic]) if (Math.hypot(t.x - p.x, t.z - p.z) < R) { scene.remove(t.car.group); traffic.splice(traffic.indexOf(t), 1); }
+  for (const o of [...cars]) { if (o.occupant === 'me' || o.type === 'heli') continue; if (Math.hypot(o.x - p.x, o.z - p.z) < R) { scene.remove(o.group); cars.splice(cars.indexOf(o), 1); } }
+  for (const rp of remotes.values()) if (rp.alive && Math.hypot(rp.dx - p.x, rp.dz - p.z) < R) net.send({ t: 'hit', id: rp.id, dmg: 45 });
+  if (!me.god && me.pos.distanceTo(p) < R * 0.6) net.send({ t: 'selfhit', dmg: 20 });
 }
 
 function insideBuilding(x, z) { for (const b of buildings) if (Math.abs(x - b.x) < b.w / 2 + 0.4 && Math.abs(z - b.z) < b.d / 2 + 0.4) return true; return false; }
@@ -342,6 +472,12 @@ const TCOL = [0xe74c3c, 0x2980b9, 0x27ae60, 0xf1c40f, 0xecf0f1, 0x34495e, 0xe67e
 })();
 function updateTraffic(dt) {
   for (const t of traffic) {
+    if (t.knockT > 0) {                                // got hit — tumble out before resuming the lane
+      t.knockT -= dt; t.x = THREE.MathUtils.clamp(t.x + t.kx * dt, 4, WORLD.SIZE - 4); t.z = THREE.MathUtils.clamp(t.z + t.kz * dt, 4, WORLD.SIZE - 4);
+      t.kx *= 0.9; t.kz *= 0.9; t.car.group.position.set(t.x, 0, t.z); t.car.group.rotation.y += dt * 4;
+      if (t.knockT <= 0) t.lane = Math.round((t.axis === 'x' ? t.z : t.x) / WORLD.BLOCK) * WORLD.BLOCK;
+      continue;
+    }
     t.turnT -= dt;
     if (Math.hypot(t.x - me.pos.x, t.z - me.pos.z) > 150) { const a = Math.random() * Math.PI * 2, nx = me.pos.x + Math.cos(a) * 95, nz = me.pos.z + Math.sin(a) * 95, onX = Math.random() < 0.5; t.axis = onX ? 'x' : 'z'; t.lane = Math.round((onX ? nz : nx) / WORLD.BLOCK) * WORLD.BLOCK; t.x = onX ? nx : t.lane; t.z = onX ? t.lane : nz; t.dir = Math.random() < 0.5 ? 1 : -1; }
     if (t.turnT <= 0) { t.turnT = 3 + Math.random() * 4; if (Math.random() < 0.5) { t.axis = t.axis === 'x' ? 'z' : 'x'; t.lane = Math.round((t.axis === 'x' ? t.z : t.x) / WORLD.BLOCK) * WORLD.BLOCK; t.dir = Math.random() < 0.5 ? 1 : -1; } }
@@ -378,10 +514,10 @@ function updateCops(dt) {
 // ---------- pickups ----------
 const pickups = [];
 function spawnPickups() {
-  const types = ['health', 'health', 'smg', 'shotgun', 'rifle'];
+  const types = ['health', 'health', 'smg', 'shotgun', 'rifle', 'rpg'];
   for (let i = 0; i < 18; i++) {
     const sp = city.spawns[(Math.random() * city.spawns.length) | 0] || { x: 60, z: 60 };
-    const type = types[i % types.length], col = type === 'health' ? 0x2ecc71 : type === 'smg' ? 0xf39c12 : type === 'shotgun' ? 0xe74c3c : 0x3498db;
+    const type = types[i % types.length], col = type === 'health' ? 0x2ecc71 : type === 'smg' ? 0xf39c12 : type === 'shotgun' ? 0xe74c3c : type === 'rpg' ? 0x9b59b6 : 0x3498db;
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.45, flatShading: true }));
     const x = sp.x + (Math.random() - 0.5) * 18, z = sp.z + (Math.random() - 0.5) * 18; mesh.position.set(x, 1, z); scene.add(mesh);
     pickups.push({ x, z, type, mesh, taken: false, respawnAt: 0 });
@@ -395,7 +531,7 @@ function updatePickups(dt) {
     if (me.alive && Math.hypot(p.x - me.pos.x, p.z - me.pos.z) < 1.9) {
       p.taken = true; p.mesh.visible = false; p.respawnAt = now + 25000;
       if (p.type === 'health') { net.send({ t: 'heal', amount: 40 }); notice('+40 health'); }
-      else { me.ammo[p.type] = (me.ammo[p.type] || 0) + (p.type === 'shotgun' ? 24 : p.type === 'rifle' ? 90 : 120); me.weapon = p.type; notice('Picked up ' + WEAPONS[p.type].name); }
+      else { me.ammo[p.type] = (me.ammo[p.type] || 0) + (p.type === 'shotgun' ? 24 : p.type === 'rifle' ? 90 : p.type === 'rpg' ? 5 : 120); me.weapon = p.type; notice('Picked up ' + WEAPONS[p.type].name); }
     }
   }
 }
@@ -404,12 +540,13 @@ function updatePickups(dt) {
 const remotes = new Map();
 function addRemote(o) {
   if (o.id === me.id || remotes.has(o.id)) return;
-  const char = makeChar(parseInt((o.color || '#3aa0ff').slice(1), 16));
-  const car = makeCar(parseInt((o.cc || '#cccccc').slice(1), 16));
-  scene.add(char.group); scene.add(car.group); car.group.visible = false;
-  const tag = makeTag(o.name, o.color);
-  scene.add(tag);
-  remotes.set(o.id, { id: o.id, name: o.name, color: o.color, char, car, tag, x: o.x, z: o.y, a: o.a, dx: o.x, dz: o.y, da: o.a, inCar: !!o.car, alive: o.alive !== false, kills: o.kills | 0, walkT: 0 });
+  const ccHex = parseInt((o.cc || '#cccccc').slice(1), 16);
+  const char = charFromLook(o.look, o.color);
+  const car = makeCar(ccHex), bike = makeBike(ccHex), heli = makeHeli();
+  scene.add(char.group); scene.add(car.group); scene.add(bike.group); scene.add(heli.group);
+  car.group.visible = false; bike.group.visible = false; heli.group.visible = false;
+  const tag = makeTag(o.name, o.color); scene.add(tag);
+  remotes.set(o.id, { id: o.id, name: o.name, color: o.color, char, car, bike, heli, tag, x: o.x, z: o.y, a: o.a, dx: o.x, dz: o.y, da: o.a, vt: o.vt | 0, vy: o.vy || 0, dvy: 0, inCar: !!o.car, alive: o.alive !== false, kills: o.kills | 0, walkT: 0 });
 }
 function makeTag(name, color) {
   const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64; const x = cv.getContext('2d');
@@ -420,17 +557,21 @@ function applySnap(list) {
   for (const o of list) {
     if (o.id === me.id) { me.kills = o.kills | 0; continue; }
     let r = remotes.get(o.id); if (!r) { addRemote(o); r = remotes.get(o.id); }
-    r.x = o.x; r.z = o.y; r.a = o.a; r.inCar = !!o.car; r.alive = o.alive !== false; r.kills = o.kills | 0; r.name = o.name; r.car.colHex = o.cc;
+    r.x = o.x; r.z = o.y; r.a = o.a; r.inCar = !!o.car; r.vt = o.vt | 0; r.vy = o.vy || 0; r.alive = o.alive !== false; r.kills = o.kills | 0; r.name = o.name; r.car.colHex = o.cc;
   }
 }
 function updateRemotes(dt) {
   for (const r of remotes.values()) {
     r.dx = THREE.MathUtils.lerp(r.dx, r.x, Math.min(1, dt * 12)); r.dz = THREE.MathUtils.lerp(r.dz, r.z, Math.min(1, dt * 12));
+    r.dvy = THREE.MathUtils.lerp(r.dvy || 0, r.vy || 0, Math.min(1, dt * 8));
     let d = r.a - r.da; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; r.da += d * Math.min(1, dt * 12);
-    const moved = Math.hypot(r.x - r.dx, r.z - r.dz);
-    if (r.inCar) { r.car.group.visible = r.alive; r.char.group.visible = false; r.car.group.position.set(r.dx, 0, r.dz); r.car.group.rotation.y = r.da; }
-    else { r.car.group.visible = false; r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0, r.dz); r.char.group.rotation.y = r.da; r.walkT += dt * 6; r.char.setPose(r.walkT, moved > 0.02, false); }
-    r.tag.visible = r.alive; r.tag.position.set(r.dx, (r.inCar ? 2.4 : 2.3), r.dz);
+    const moved = Math.hypot(r.x - r.dx, r.z - r.dz), vt = r.vt | 0, p = r.char.parts;
+    r.car.group.visible = vt === 1 && r.alive; r.bike.group.visible = vt === 2 && r.alive; r.heli.group.visible = vt === 3 && r.alive;
+    if (vt === 1) { r.car.group.position.set(r.dx, 0, r.dz); r.car.group.rotation.y = r.da; r.char.group.visible = false; }
+    else if (vt === 3) { r.heli.group.position.set(r.dx, r.dvy, r.dz); r.heli.group.rotation.y = r.da; if (r.heli.rotor) r.heli.rotor.rotation.y += dt * 32; r.char.group.visible = false; }
+    else if (vt === 2) { r.bike.group.position.set(r.dx, 0, r.dz); r.bike.group.rotation.y = r.da; r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0.18, r.dz); r.char.group.rotation.set(0, r.da, 0); p.armL.rotation.set(-1.1, 0, 0.2); p.armR.rotation.set(-1.1, 0, -0.2); p.legL.rotation.set(0.5, 0, 0.28); p.legR.rotation.set(0.5, 0, -0.28); }
+    else { r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0, r.dz); r.char.group.rotation.set(0, r.da, 0); p.legL.rotation.z = 0; p.legR.rotation.z = 0; r.walkT += dt * 6; r.char.setPose(r.walkT, moved > 0.02, false); }
+    r.tag.visible = r.alive; r.tag.position.set(r.dx, (vt === 3 ? r.dvy + 2.6 : vt ? 2.4 : 2.3), r.dz);
   }
 }
 
@@ -441,7 +582,7 @@ function onMsg(m) {
   switch (m.t) {
     case 'init': me.id = m.id; if (m.you) me.pos.set(m.you.x, 0, m.you.y); for (const o of m.players) addRemote(o); break;
     case 'spawn': addRemote(m.p); break;
-    case 'leave': { const r = remotes.get(m.id); if (r) { scene.remove(r.char.group); scene.remove(r.car.group); scene.remove(r.tag); remotes.delete(m.id); } break; }
+    case 'leave': { const r = remotes.get(m.id); if (r) { scene.remove(r.char.group); scene.remove(r.car.group); scene.remove(r.bike.group); scene.remove(r.heli.group); scene.remove(r.tag); remotes.delete(m.id); } break; }
     case 'snap': applySnap(m.players); break;
     case 'shot': peerShot(m); break;
     case 'hp': me.hp = m.hp; flash(); shake = Math.max(shake, 0.25); break;
@@ -455,7 +596,7 @@ function onMsg(m) {
 }
 function peerShot(m) { const a = new THREE.Vector3(m.x, 1.4, m.y); const b = a.clone().add(new THREE.Vector3(Math.sin(m.a), 0, Math.cos(m.a)).multiplyScalar(40)); addTracer(a, b); muzzle(a); if (a.distanceTo(me.pos) < 80) gun(0.4); }
 let sendAcc = 0;
-function netTick(dt) { sendAcc += dt; if (sendAcc > 1 / 15 && me.id) { sendAcc = 0; net.send({ t: 'state', x: me.pos.x, y: me.pos.z, a: me.heading, car: me.inCar ? 1 : 0, cc: '#' + (me.inCar ? me.inCar.colHex : 0xcccccc).toString(16).padStart(6, '0') }); } }
+function netTick(dt) { sendAcc += dt; if (sendAcc > 1 / 15 && me.id) { sendAcc = 0; const vt = me.inCar ? (me.inCar.type === 'bike' ? 2 : me.inCar.type === 'heli' ? 3 : 1) : 0; net.send({ t: 'state', x: me.pos.x, y: me.pos.z, a: me.heading, car: me.inCar ? 1 : 0, vt, vy: vt === 3 ? me.pos.y : 0, cc: '#' + (me.inCar ? me.inCar.colHex : 0xcccccc).toString(16).padStart(6, '0') }); } }
 
 // ---------- audio ----------
 let AC = null, eng = null;
@@ -463,6 +604,7 @@ function aInit() { if (!AC) AC = new (window.AudioContext || window.webkitAudioC
 function gun(v = 1) { if (!AC) return; const o = AC.createOscillator(), g = AC.createGain(); o.type = 'square'; o.frequency.setValueAtTime(300, AC.currentTime); o.frequency.exponentialRampToValueAtTime(70, AC.currentTime + 0.09); g.gain.value = 0.12 * v; g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.1); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.1); }
 function screech() { if (!AC || screech._t && AC.currentTime - screech._t < 0.2) return; screech._t = AC.currentTime; const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sawtooth'; o.frequency.value = 900; g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.2); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.2); }
 function engine() { if (eng) { try { eng.g.gain.value = 0; eng.o.stop(); } catch {} eng = null; } } // engine sound removed
+function boom() { if (!AC) return; const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(130, AC.currentTime); o.frequency.exponentialRampToValueAtTime(28, AC.currentTime + 0.45); g.gain.value = 0.3; g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.55); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.55); const n = AC.createOscillator(), ng = AC.createGain(); n.type = 'square'; n.frequency.value = 70; ng.gain.value = 0.14; ng.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.28); n.connect(ng); ng.connect(AC.destination); n.start(); n.stop(AC.currentTime + 0.28); }
 
 // ---------- HUD ----------
 const $ = id => document.getElementById(id);
@@ -524,32 +666,65 @@ cheatIn.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'E
 function giveCar() {
   const colHex = 0x0d0f12, c = makeCar(colHex);
   c.x = me.pos.x + Math.sin(me.heading + Math.PI / 2) * 3; c.z = me.pos.z + Math.cos(me.heading + Math.PI / 2) * 3;
-  c.heading = me.heading; c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = colHex; c.occupant = null; c.roll = 0; c.pitch = 0;
+  c.heading = me.heading; c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = colHex; c.occupant = null; c.roll = 0; c.pitch = 0; c.type = 'car';
   c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c); return c;
 }
+function giveBike() {
+  const colHex = 0x111316, b = makeBike(colHex);
+  b.x = me.pos.x + Math.sin(me.heading + Math.PI / 2) * 2.5; b.z = me.pos.z + Math.cos(me.heading + Math.PI / 2) * 2.5;
+  b.heading = me.heading; b.speed = 0; b.vx = 0; b.vz = 0; b.colHex = colHex; b.occupant = null; b.roll = 0; b.pitch = 0; b.type = 'bike';
+  b.group.position.set(b.x, 0, b.z); b.group.rotation.y = b.heading; scene.add(b.group); cars.push(b); return b;
+}
+function giveHeli() {
+  const h = makeHeli(0x2c3e57);
+  h.x = me.pos.x + Math.sin(me.heading) * 6; h.z = me.pos.z + Math.cos(me.heading) * 6; h.y = 0;
+  h.heading = me.heading; h.speed = 0; h.vx = 0; h.vz = 0; h.colHex = 0x2c3e57; h.occupant = null; h.roll = 0; h.pitch = 0; h.type = 'heli'; h.rotorSpin = 0;
+  h.group.position.set(h.x, 0, h.z); scene.add(h.group); cars.push(h); return h;
+}
+function enterVehicle(c) { if (me.inCar) { me.inCar.occupant = null; } c.occupant = 'me'; me.inCar = c; me.char.group.visible = c.type === 'bike' && !me.fp; }
 function applyCheat(raw) {
   const cmd = String(raw || '').trim().toLowerCase(); if (!cmd) return;
   switch (cmd) {
-    case 'help': case '?': notice('cheats: health · guns · ammo · god · wanted · stars · car · speed · boom'); break;
+    case 'help': case '?': notice('health · guns · rpg · god · wanted · stars · car · bike · heli · speed · boom'); break;
     case 'health': case 'hp': case 'heal': me.hp = 100; me.alive = true; net.send({ t: 'cheat', key: OWNER_KEY }); notice('❤ Full health'); break;
     case 'guns': case 'weapons': for (const w of WORDER) me.ammo[w] = w === 'pistol' ? Infinity : 999; notice('🔫 All weapons + ammo'); break;
     case 'ammo': for (const w of WORDER) if (me.ammo[w] !== Infinity) me.ammo[w] = 999; notice('Ammo refilled'); break;
     case 'god': case 'godmode': me.god = !me.god; notice('🛡 God mode ' + (me.god ? 'ON' : 'OFF')); break;
     case 'wanted': case 'clean': case 'lawful': me.wanted = 0; me.heat = 0; notice('Wanted cleared'); break;
     case 'stars': case 'star': case 'heat': me.heat = 36; me.wanted = 5; me.lastCrime = performance.now(); notice('★★★★★ 5 stars'); break;
-    case 'car': case 'vehicle': case 'spawncar': { const c = giveCar(); if (!me.inCar) { c.occupant = 'me'; me.inCar = c; me.char.group.visible = false; } notice('🚗 Car spawned'); break; }
+    case 'car': case 'vehicle': case 'spawncar': enterVehicle(giveCar()); notice('🚗 Car spawned'); break;
+    case 'bike': case 'moto': case 'motorcycle': enterVehicle(giveBike()); notice('🏍 Bike spawned'); break;
+    case 'heli': case 'helicopter': case 'chopper': enterVehicle(giveHeli()); notice('🚁 Heli — Space up, Shift down, W fwd'); break;
+    case 'rpg': case 'rocket': case 'launcher': me.ammo.rpg = Math.max(me.ammo.rpg, 10); me.weapon = 'rpg'; notice('🚀 RPG +10'); break;
     case 'speed': case 'fast': case 'turbo': me.turbo = !me.turbo; notice('💨 Speed boost ' + (me.turbo ? 'ON' : 'OFF')); break;
     case 'boom': case 'kaboom': case 'nuke': { let n = 0; for (const t of [...traffic]) if (Math.hypot(t.x - me.pos.x, t.z - me.pos.z) < 30) { scene.remove(t.car.group); traffic.splice(traffic.indexOf(t), 1); n++; } for (const pd of peds) if (pd.alive && Math.hypot(pd.x - me.pos.x, pd.z - me.pos.z) < 30) { pd.die(); n++; } notice('💥 Boom! (' + n + ')'); break; }
     default: notice("Unknown cheat: " + cmd + "  (type help)"); break;
   }
 }
 
-// ---------- menu ----------
+// ---------- menu / customization ----------
 let playing = false;
-const COLORS = ['#3aa0ff', '#ff4d6d', '#36c2bd', '#9b59ff', '#ff8a3c', '#2ecc71', '#ffd83a', '#ffffff'];
-(function () { const w = $('colors'); COLORS.forEach((c, i) => { const d = document.createElement('div'); d.className = 'sw' + (i === 0 ? ' on' : ''); d.style.background = c; d.onclick = () => { w.querySelectorAll('.sw').forEach(s => s.classList.remove('on')); d.classList.add('on'); me.colorHex = parseInt(c.slice(1), 16); rebuildMe(c); }; w.appendChild(d); }); })();
-function rebuildMe(c) { scene.remove(me.char.group); me.char = makeChar(parseInt(c.slice(1), 16)); me.char.group.position.copy(me.pos); scene.add(me.char.group); }
-$('play').onclick = () => { me.name = ($('name').value || 'Player').slice(0, 14); aInit(); net.connect(); net.send({ t: 'join', name: me.name, color: '#' + me.colorHex.toString(16).padStart(6, '0') }); $('menu').style.display = 'none'; $('hud').style.display = 'block'; playing = true; };
+const PAL = {
+  shirt: ['#3aa0ff', '#ff4d6d', '#36c2bd', '#9b59ff', '#ff8a3c', '#2ecc71', '#ffd83a', '#ffffff', '#111416'],
+  skin: ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#5a3a1a'],
+  hair: ['#20140d', '#4a2f1a', '#8a6b2a', '#c9a23a', '#b0b0b0', '#222222', '#aa3322', '#6a3aa0'],
+  pants: ['#2c3e50', '#1a1a1a', '#5b3a2a', '#3a5a3a', '#7a6a4a', '#8a3a4a', '#cfd2d6'],
+};
+function buildSwatches(containerId, palette, key) {
+  const w = $(containerId); if (!w) return;
+  palette.forEach(c => {
+    const d = document.createElement('div'); d.className = 'sw' + (c === me.look[key] ? ' on' : ''); d.style.background = c;
+    d.onclick = () => { w.querySelectorAll('.sw').forEach(s => s.classList.remove('on')); d.classList.add('on'); me.look[key] = c; if (key === 'shirt') me.colorHex = parseInt(c.slice(1), 16); rebuildMe(); };
+    w.appendChild(d);
+  });
+}
+buildSwatches('colors', PAL.shirt, 'shirt');
+buildSwatches('skincolors', PAL.skin, 'skin');
+buildSwatches('haircolors', PAL.hair, 'hair');
+buildSwatches('pantscolors', PAL.pants, 'pants');
+if ($('hattoggle')) $('hattoggle').onclick = () => { me.look.hat = !me.look.hat; $('hattoggle').classList.toggle('on', me.look.hat); $('hattoggle').textContent = me.look.hat ? '🧢 Cap: ON' : '🧢 Cap: OFF'; rebuildMe(); };
+function rebuildMe() { const vis = me.char ? me.char.group.visible : true; if (me.char) scene.remove(me.char.group); me.char = buildChar(); me.char.group.position.copy(me.pos); me.char.group.visible = vis; scene.add(me.char.group); }
+$('play').onclick = () => { me.name = ($('name').value || 'Player').slice(0, 14); aInit(); net.connect(); net.send({ t: 'join', name: me.name, color: me.look.shirt, look: me.look }); $('menu').style.display = 'none'; $('hud').style.display = 'block'; playing = true; };
 $('name').addEventListener('keydown', e => { if (e.key === 'Enter') $('play').click(); });
 function poll() { fetch('/info').then(r => r.json()).then(d => $('online').textContent = d.players).catch(() => {}); }
 poll(); setInterval(() => { if (!playing) poll(); }, 4000);
@@ -557,13 +732,28 @@ poll(); setInterval(() => { if (!playing) poll(); }, 4000);
 // ---------- loop ----------
 const clock = new THREE.Clock();
 let menuA = 0;
+const previewCam = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+let previewRot = 0;
+function renderPreview(dt) {                            // rotating live character preview on the menu
+  if (!me.char) return;
+  previewRot += dt * 0.7; me.char.group.rotation.y = previewRot;
+  const cx = me.pos.x, cz = me.pos.z;
+  previewCam.position.set(cx, 1.5, cz + 4.4); previewCam.lookAt(cx, 1.0, cz);
+  const boxW = Math.min(340, innerWidth * 0.4), boxH = Math.min(540, innerHeight * 0.72), by = (innerHeight - boxH) / 2, bx = innerWidth - boxW - 26;
+  previewCam.aspect = boxW / boxH; previewCam.updateProjectionMatrix();
+  renderer.setScissorTest(true);
+  renderer.setViewport(bx, by, boxW, boxH); renderer.setScissor(bx, by, boxW, boxH);
+  renderer.render(scene, previewCam);
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
+}
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, clock.getDelta());
-  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updatePickups(dt); updateWanted(dt); updateRemotes(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); }
+  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updatePickups(dt); updateWanted(dt); updateRemotes(dt); updateRockets(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); }
   else { menuA += dt * 0.1; camera.position.set(WORLD.SIZE / 2 + Math.cos(menuA) * 90, 70, WORLD.SIZE / 2 + Math.sin(menuA) * 90); camera.lookAt(WORLD.SIZE / 2, 8, WORLD.SIZE / 2); updateFx(dt); }
   renderer.render(scene, camera);
+  if (!playing) renderPreview(dt);
 }
 spawnPickups();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, enterVehicle, rockets, updateRockets, fireRocket, explode, updateRemotes, render: () => renderer.render(scene, camera) };

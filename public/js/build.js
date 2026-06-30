@@ -144,17 +144,75 @@ export function makeCar(color = 0xd23b3b, police = false) {
   return { group: g, wheels, lightbar };
 }
 
-// ---------- character ----------
-const SKIN = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac];
-export function makeChar(shirt = 0x3aa0ff) {
+// ---------- motorcycle ----------
+export function makeBike(color = 0x202225) {
   const g = new THREE.Group();
-  const skin = SKIN[(Math.random() * SKIN.length) | 0];
-  const pants = 0x2c3e50;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.34, 1.9), STD(color, { roughness: 0.45, metalness: 0.35 }));
+  body.position.y = 0.72; body.castShadow = true; g.add(body);
+  const tank = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.7), STD(color, { roughness: 0.4, metalness: 0.35 }));
+  tank.position.set(0, 0.9, 0.12); g.add(tank);
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.85), STD(0x111316)); seat.position.set(0, 0.98, -0.5); g.add(seat);
+  const bars = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.07, 0.07), STD(0x33363c)); bars.position.set(0, 1.06, 0.78); g.add(bars);
+  const fork = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.75, 0.08), STD(0x33363c)); fork.position.set(0, 0.72, 0.86); fork.rotation.x = 0.35; g.add(fork);
+  const hl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.1), new THREE.MeshStandardMaterial({ color: 0xfff6cf, emissive: 0xfff0b0, emissiveIntensity: 0.8 })); hl.position.set(0, 0.92, 1.0); g.add(hl);
+  const wheels = [];
+  const wgeo = new THREE.CylinderGeometry(0.44, 0.44, 0.18, 16); wgeo.rotateZ(Math.PI / 2);
+  for (const z of [0.98, -0.98]) { const w = new THREE.Mesh(wgeo, STD(0x14151a)); w.position.set(0, 0.44, z); w.castShadow = true; g.add(w); wheels.push(w); }
+  return { group: g, wheels, lightbar: null };
+}
+
+// ---------- helicopter ----------
+export function makeHeli(color = 0x2c3e57) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.5, 3.2), STD(color, { roughness: 0.5, metalness: 0.25 }));
+  body.position.y = 1.5; body.castShadow = true; g.add(body);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(1.55, 1.15, 1.3), STD(0x16242e, { roughness: 0.2, metalness: 0.45 }));
+  nose.position.set(0, 1.55, 1.9); g.add(nose);
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.5, 3.2), STD(color)); tail.position.set(0, 1.95, -2.9); tail.castShadow = true; g.add(tail);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.0, 0.7), STD(color)); fin.position.set(0, 2.4, -4.3); g.add(fin);
+  for (const x of [-0.85, 0.85]) {
+    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 2.6), STD(0x222428)); skid.position.set(x, 0.25, 0.2); g.add(skid);
+    for (const z of [0.7, -0.4]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), STD(0x222428)); leg.position.set(x, 0.55, z); g.add(leg); }
+  }
+  const rotor = new THREE.Group();
+  rotor.add(new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.35, 8), STD(0x111316)));
+  for (let i = 0; i < 2; i++) { const blade = new THREE.Mesh(new THREE.BoxGeometry(9, 0.06, 0.42), STD(0x15171c)); blade.rotation.y = i * Math.PI / 2; rotor.add(blade); }
+  rotor.position.set(0, 2.95, 0); g.add(rotor);
+  const trotor = new THREE.Group();
+  for (let i = 0; i < 2; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.7, 0.22), STD(0x15171c)); b.rotation.z = i * Math.PI / 2; trotor.add(b); }
+  trotor.position.set(0.35, 1.95, -4.4); g.add(trotor);
+  return { group: g, rotor, trotor, wheels: [] };
+}
+
+// ---------- rocket (RPG projectile) ----------
+export function makeRocket() {
+  const g = new THREE.Group();
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.75, 8), STD(0x556070, { metalness: 0.4 })); b.rotation.x = Math.PI / 2; g.add(b);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.32, 8), new THREE.MeshStandardMaterial({ color: 0xcc3322, emissive: 0x551100, emissiveIntensity: 0.6, flatShading: true })); tip.rotation.x = Math.PI / 2; tip.position.z = 0.52; g.add(tip);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.2), STD(0x333)); fin.position.z = -0.3; g.add(fin);
+  const fin2 = fin.clone(); fin2.rotation.z = Math.PI / 2; g.add(fin2);
+  return g;
+}
+
+// ---------- character ----------
+export const SKIN = [0xffdbac, 0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0x5a3a1a];
+export const HAIR = [0x20140d, 0x4a2f1a, 0x8a6b2a, 0xc9a23a, 0xb0b0b0, 0x222222, 0xaa3322, 0x6a3aa0];
+// shirt = main shirt colour. opts: { skin, hair, pants, hat } (any may be omitted)
+export function makeChar(shirt = 0x3aa0ff, opts = {}) {
+  const g = new THREE.Group();
+  const skin = opts.skin != null ? opts.skin : SKIN[(Math.random() * SKIN.length) | 0];
+  const pants = opts.pants != null ? opts.pants : 0x2c3e50;
+  const hairCol = opts.hair != null ? opts.hair : 0x20140d;
   const limb = (w, h, d, c) => { const grp = new THREE.Group(); const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), STD(c)); m.position.y = -h / 2; m.castShadow = true; grp.add(m); return grp; };
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.75, 0.32), STD(shirt)); torso.position.y = 1.15; torso.castShadow = true; g.add(torso);
   const hips = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.32), STD(pants)); hips.position.y = 0.74; g.add(hips);
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.32), STD(skin)); head.position.y = 1.72; head.castShadow = true; g.add(head);
-  const hair = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.12, 0.36), STD(0x20140d)); hair.position.y = 1.9; g.add(hair);
+  if (opts.hat) {
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.4), STD(hairCol)); crown.position.y = 1.96; crown.castShadow = true; g.add(crown);
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.26), STD(hairCol)); brim.position.set(0, 1.9, 0.3); g.add(brim);
+  } else {
+    const hair = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.13, 0.36), STD(hairCol)); hair.position.y = 1.9; hair.castShadow = true; g.add(hair);
+  }
   const armL = limb(0.15, 0.66, 0.15, shirt); armL.position.set(-0.36, 1.5, 0); g.add(armL);
   const armR = limb(0.15, 0.66, 0.15, shirt); armR.position.set(0.36, 1.5, 0); g.add(armR);
   const legL = limb(0.19, 0.74, 0.2, pants); legL.position.set(-0.14, 0.74, 0); g.add(legL);
