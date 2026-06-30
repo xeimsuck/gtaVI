@@ -34,8 +34,9 @@ function bcast(o, except) { const s = JSON.stringify(o); for (const p of players
 wss.on('connection', (ws) => {
   const id = 'p' + (NID++);
   const s = spawn();
-  const p = { id, ws, name: 'Player', color: '#ff4d6d', x: s.x, y: s.y, a: 0, car: 0, cc: '#cccccc', hp: 100, alive: true, kills: 0, deaths: 0, owner: false, respawnAt: 0 };
+  const p = { id, ws, name: 'Player', color: '#ff4d6d', x: s.x, y: s.y, a: 0, car: 0, cc: '#cccccc', hp: 100, alive: true, kills: 0, deaths: 0, owner: false, respawnAt: 0, joined: false, isAlive: true };
   players.set(id, p);
+  ws.on('pong', () => { p.isAlive = true; });
 
   ws.on('message', (raw) => {
     if (raw.length > 4096) return;
@@ -43,7 +44,8 @@ wss.on('connection', (ws) => {
     if (m.t === 'join') {
       p.name = String(m.name || 'Player').slice(0, 14).replace(/[<>&]/g, '') || 'Player';
       p.color = /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#ff4d6d';
-      send(p, { t: 'init', id, you: ent(p), players: [...players.values()].filter(o => o.id !== id).map(ent) });
+      p.joined = true;                                   // only now is this socket a real player in the world
+      send(p, { t: 'init', id, you: ent(p), players: [...players.values()].filter(o => o.id !== id && o.joined).map(ent) });
       bcast({ t: 'spawn', p: ent(p) }, id);
     } else if (m.t === 'state') {
       p.x = +m.x || 0; p.y = +m.y || 0; p.a = +m.a || 0;
@@ -94,14 +96,23 @@ wss.on('connection', (ws) => {
 
 function ent(p) { return { id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, a: p.a, car: p.car, cc: p.cc, hp: p.hp, alive: p.alive, kills: p.kills }; }
 
-// 20 Hz snapshot
+// 20 Hz snapshot — only joined players exist in the world
 setInterval(() => {
   const now = Date.now();
   for (const p of players.values()) if (!p.alive && p.respawnAt && now > p.respawnAt) { const sp = spawn(); p.alive = true; p.hp = 100; p.x = sp.x; p.y = sp.y; send(p, { t: 'resp', x: p.x, y: p.y }); }
-  if (!players.size) return;
-  const snap = JSON.stringify({ t: 'snap', players: [...players.values()].map(p => ({ id: p.id, x: p.x, y: p.y, a: p.a, car: p.car, cc: p.cc, alive: p.alive, name: p.name, color: p.color, kills: p.kills })) });
-  for (const p of players.values()) { try { p.ws.send(snap); } catch {} }
+  const live = [...players.values()].filter(p => p.joined);
+  if (!live.length) return;
+  const snap = JSON.stringify({ t: 'snap', players: live.map(p => ({ id: p.id, x: p.x, y: p.y, a: p.a, car: p.car, cc: p.cc, alive: p.alive, name: p.name, color: p.color, kills: p.kills })) });
+  for (const p of live) { try { p.ws.send(snap); } catch {} }
 }, 50);
+
+// heartbeat: terminate dead sockets (browsers auto-reply to pings even when backgrounded)
+setInterval(() => {
+  for (const p of players.values()) {
+    if (p.isAlive === false) { try { p.ws.terminate(); } catch {} players.delete(p.id); bcast({ t: 'leave', id: p.id }); continue; }
+    p.isAlive = false; try { p.ws.ping(); } catch {}
+  }
+}, 12000);
 
 server.listen(PORT, () => {
   console.log('=================================');

@@ -119,7 +119,7 @@ function driveCar(c, dt) {
   const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
   let vF = c.vx * fwd.x + c.vz * fwd.z, vL = c.vx * right.x + c.vz * right.z;
   const thr = axisY(), steer = axisX(), hb = keys.has('Space');
-  const accel = 34, top = 46, rev = 18;
+  const accel = me.turbo ? 72 : 34, top = me.turbo ? 92 : 46, rev = 18;
   if (thr > 0) vF += accel * dt; else if (thr < 0) vF -= accel * 0.7 * dt;
   if (hb) vF -= vF * 2.2 * dt;
   vF -= vF * (thr === 0 ? 0.7 : 0.12) * dt;
@@ -159,7 +159,7 @@ function updatePlayer(dt) {
     const md = new THREE.Vector3().addScaledVector(fwd, axisY()).addScaledVector(right, axisX());
     const moving = md.lengthSq() > 0.01; if (moving) md.normalize();
     me.aiming = mouse.down;
-    const spd = (keys.has('ShiftLeft') && !me.aiming ? 9 : 5);
+    const spd = (keys.has('ShiftLeft') && !me.aiming ? 9 : 5) * (me.turbo ? 2.2 : 1);
     me.pos.addScaledVector(md, spd * dt);
     // jump/gravity
     if (me.onGround && keys.has('Space')) { me.vy = 8; me.onGround = false; }
@@ -371,7 +371,7 @@ function updateCops(dt) {
     cp.car.group.position.set(cp.x, 0, cp.z); cp.car.group.rotation.y = cp.heading;
     for (const w of cp.car.wheels) w.rotation.x += d * dt * 0.1;
     if (cp.car.lightbar) { const f = Math.sin(performance.now() / 120) > 0; cp.car.lightbar.userData.red.material.emissiveIntensity = f ? 2 : 0.2; cp.car.lightbar.userData.blue.material.emissiveIntensity = f ? 0.2 : 2; }
-    if (canShoot && d < 42 && me.alive) { addTracer(new THREE.Vector3(cp.x, 1.4, cp.z), new THREE.Vector3(me.pos.x, 1.2, me.pos.z)); if (Math.random() < 0.4) net.send({ t: 'selfhit', dmg: 4 + me.wanted * 2 }); }
+    if (canShoot && d < 42 && me.alive) { addTracer(new THREE.Vector3(cp.x, 1.4, cp.z), new THREE.Vector3(me.pos.x, 1.2, me.pos.z)); if (Math.random() < 0.4 && !me.god) net.send({ t: 'selfhit', dmg: 4 + me.wanted * 2 }); }
   }
 }
 
@@ -462,7 +462,7 @@ let AC = null, eng = null;
 function aInit() { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); }
 function gun(v = 1) { if (!AC) return; const o = AC.createOscillator(), g = AC.createGain(); o.type = 'square'; o.frequency.setValueAtTime(300, AC.currentTime); o.frequency.exponentialRampToValueAtTime(70, AC.currentTime + 0.09); g.gain.value = 0.12 * v; g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.1); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.1); }
 function screech() { if (!AC || screech._t && AC.currentTime - screech._t < 0.2) return; screech._t = AC.currentTime; const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sawtooth'; o.frequency.value = 900; g.gain.value = 0.04; g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.2); o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.2); }
-function engine(level) { if (!AC) return; if (level > 0.01 && !eng) { const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sawtooth'; o.frequency.value = 60; g.gain.value = 0; o.connect(g); g.connect(AC.destination); o.start(); eng = { o, g }; } if (eng) { eng.o.frequency.value = 55 + level * 130; eng.g.gain.value = level > 0.01 ? 0.04 + level * 0.05 : 0; } }
+function engine() { if (eng) { try { eng.g.gain.value = 0; eng.o.stop(); } catch {} eng = null; } } // engine sound removed
 
 // ---------- HUD ----------
 const $ = id => document.getElementById(id);
@@ -516,6 +516,34 @@ const chat = $('chatinput');
 addEventListener('keydown', e => { if (e.code === 'Enter' && !captured && playing) { captured = true; chat.classList.add('show'); chat.focus(); document.exitPointerLock(); e.preventDefault(); } });
 chat.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { const v = chat.value.trim(); if (v) net.send({ t: 'chat', m: v }); chat.value = ''; captured = false; chat.classList.remove('show'); chat.blur(); } else if (e.key === 'Escape') { chat.value = ''; captured = false; chat.classList.remove('show'); chat.blur(); } });
 
+// ---- cheat console (open with ` or / ) ----
+const OWNER_KEY = 'vice';
+const cheatIn = $('cheat');
+addEventListener('keydown', e => { if ((e.code === 'Backquote' || e.code === 'Slash') && !captured && playing) { captured = true; keys.clear(); cheatIn.classList.add('show'); cheatIn.focus(); document.exitPointerLock(); e.preventDefault(); } });
+cheatIn.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { applyCheat(cheatIn.value); cheatIn.value = ''; captured = false; cheatIn.classList.remove('show'); cheatIn.blur(); } else if (e.key === 'Escape') { cheatIn.value = ''; captured = false; cheatIn.classList.remove('show'); cheatIn.blur(); } });
+function giveCar() {
+  const colHex = 0x0d0f12, c = makeCar(colHex);
+  c.x = me.pos.x + Math.sin(me.heading + Math.PI / 2) * 3; c.z = me.pos.z + Math.cos(me.heading + Math.PI / 2) * 3;
+  c.heading = me.heading; c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = colHex; c.occupant = null; c.roll = 0; c.pitch = 0;
+  c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c); return c;
+}
+function applyCheat(raw) {
+  const cmd = String(raw || '').trim().toLowerCase(); if (!cmd) return;
+  switch (cmd) {
+    case 'help': case '?': notice('cheats: health · guns · ammo · god · wanted · stars · car · speed · boom'); break;
+    case 'health': case 'hp': case 'heal': me.hp = 100; me.alive = true; net.send({ t: 'cheat', key: OWNER_KEY }); notice('❤ Full health'); break;
+    case 'guns': case 'weapons': for (const w of WORDER) me.ammo[w] = w === 'pistol' ? Infinity : 999; notice('🔫 All weapons + ammo'); break;
+    case 'ammo': for (const w of WORDER) if (me.ammo[w] !== Infinity) me.ammo[w] = 999; notice('Ammo refilled'); break;
+    case 'god': case 'godmode': me.god = !me.god; notice('🛡 God mode ' + (me.god ? 'ON' : 'OFF')); break;
+    case 'wanted': case 'clean': case 'lawful': me.wanted = 0; me.heat = 0; notice('Wanted cleared'); break;
+    case 'stars': case 'star': case 'heat': me.heat = 36; me.wanted = 5; me.lastCrime = performance.now(); notice('★★★★★ 5 stars'); break;
+    case 'car': case 'vehicle': case 'spawncar': { const c = giveCar(); if (!me.inCar) { c.occupant = 'me'; me.inCar = c; me.char.group.visible = false; } notice('🚗 Car spawned'); break; }
+    case 'speed': case 'fast': case 'turbo': me.turbo = !me.turbo; notice('💨 Speed boost ' + (me.turbo ? 'ON' : 'OFF')); break;
+    case 'boom': case 'kaboom': case 'nuke': { let n = 0; for (const t of [...traffic]) if (Math.hypot(t.x - me.pos.x, t.z - me.pos.z) < 30) { scene.remove(t.car.group); traffic.splice(traffic.indexOf(t), 1); n++; } for (const pd of peds) if (pd.alive && Math.hypot(pd.x - me.pos.x, pd.z - me.pos.z) < 30) { pd.die(); n++; } notice('💥 Boom! (' + n + ')'); break; }
+    default: notice("Unknown cheat: " + cmd + "  (type help)"); break;
+  }
+}
+
 // ---------- menu ----------
 let playing = false;
 const COLORS = ['#3aa0ff', '#ff4d6d', '#36c2bd', '#9b59ff', '#ff8a3c', '#2ecc71', '#ffd83a', '#ffffff'];
@@ -538,4 +566,4 @@ function loop() {
 }
 spawnPickups();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, crime, toggleMap, drawMap, mapcv, render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, render: () => renderer.render(scene, camera) };
