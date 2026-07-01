@@ -51,8 +51,8 @@ export function makeCity(scene, seed = 7) {
   const landmarks = [];
   const B = WORLD.BLOCK, RO = WORLD.ROAD, G = WORLD.GRID, S = WORLD.SIZE;
 
-  // ----- two islands: A (start, smaller) and D (bigger, less gridded) -----
-  const A = { cx: 300, cz: 340, r: 200 }, D = { cx: 760, cz: 720, r: 320 };
+  // ----- two islands: A (start, smaller) and D (bigger, less gridded) — placed side by side so the bridge is a straight road -----
+  const A = { cx: 250, cz: 360, r: 190 }, D = { cx: 820, cz: 400, r: 315 };
   const wob = (isl, p1, p2, p3) => a => isl.r * (0.80 + 0.13 * Math.sin(3 * a + p1) + 0.085 * Math.sin(5 * a + p2) + 0.055 * Math.sin(7 * a + p3) + 0.04 * Math.sin(2 * a));
   const wA = wob(A, 0.9, 2.1, 0.4), wD = wob(D, 0.4, 1.7, 2.3);
   const inA = (x, z) => Math.hypot(x - A.cx, z - A.cz) < wA(Math.atan2(z - A.cz, x - A.cx));
@@ -62,8 +62,10 @@ export function makeCity(scene, seed = 7) {
   const bdx = D.cx - A.cx, bdz = D.cz - A.cz, blen0 = Math.hypot(bdx, bdz), bux = bdx / blen0, buz = bdz / blen0;
   const pAx = A.cx + bux * (A.r * 0.82), pAz = A.cz + buz * (A.r * 0.82);
   const pDx = D.cx - bux * (D.r * 0.82), pDz = D.cz - buz * (D.r * 0.82);
-  const bridgeLen = Math.hypot(pDx - pAx, pDz - pAz), bheading = Math.atan2(bux, buz), HALF = 6.5, perpx = -buz, perpz = bux;
+  const bridgeLen = Math.hypot(pDx - pAx, pDz - pAz), bheading = Math.atan2(bux, buz), HALF = 11, perpx = -buz, perpz = bux;
   const onBridge = (x, z) => { const rx = x - pAx, rz = z - pAz, t = rx * bux + rz * buz; if (t < -3 || t > bridgeLen + 3) return false; return Math.abs(rx * perpx + rz * perpz) < HALF; };
+  // a wider corridor (incl. the on-ramps into each island) that we keep clear of buildings so you can drive onto the bridge
+  const bridgeCorridor = (x, z) => { const rx = x - pAx, rz = z - pAz, t = rx * bux + rz * buz; if (t < -30 || t > bridgeLen + 30) return false; return Math.abs(rx * perpx + rz * perpz) < HALF + 10; };
 
   const isLand = (x, z) => inA(x, z) || inD(x, z);
 
@@ -89,7 +91,7 @@ export function makeCity(scene, seed = 7) {
     { type: 'police', label: 'POLICE', sbg: '#1f2f5c', col: 0x30416e, tx: D.cx + D.r * 0.5, tz: D.cz + D.r * 0.15 },
   ];
   const lmCell = {};
-  for (const lm of LMDEF) { let best = null, bd = 1e9; for (const c of landCells) { const dd = Math.hypot(c.cx - lm.tx, c.cz - lm.tz); if (dd < bd) { bd = dd; best = c; } } if (best) lmCell[best.gx + ',' + best.gz] = lm; }
+  for (const lm of LMDEF) { let best = null, bd = 1e9; for (const c of landCells) { if (bridgeCorridor(c.cx, c.cz)) continue; const dd = Math.hypot(c.cx - lm.tx, c.cz - lm.tz); if (dd < bd) { bd = dd; best = c; } } if (best) lmCell[best.gx + ',' + best.gz] = lm; }
 
   for (const c of landCells) {
     const { gx, gz, cx, cz } = c;
@@ -97,6 +99,10 @@ export function makeCity(scene, seed = 7) {
     if (coastal) { const sand = new THREE.Mesh(sandGeo, sandMat); sand.rotation.x = -Math.PI / 2; sand.position.set(cx, -0.05, cz); sand.receiveShadow = true; g.add(sand); }
     const asph = new THREE.Mesh(asphGeo, asphaltMat); asph.rotation.x = -Math.PI / 2; asph.position.set(cx, 0.005, cz); asph.receiveShadow = true; g.add(asph);
 
+    if (bridgeCorridor(cx, cz)) {                       // keep the bridge on-ramp clear — road only, no buildings
+      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);
+      continue;
+    }
     const lm = lmCell[gx + ',' + gz];
     if (lm) {
       const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);

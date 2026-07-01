@@ -24,8 +24,8 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 const players = new Map();
 let NID = 1;
-const SPAWNS = [];   // on the start island A (centred ~300,340 in the 1040 world)
-for (let i = 0; i < 24; i++) SPAWNS.push({ x: 250 + (i % 6) * 34, y: 290 + ((i / 6) | 0) * 34 });
+const SPAWNS = [];   // on the start island A (centred ~250,360 in the 1040 world)
+for (let i = 0; i < 24; i++) SPAWNS.push({ x: 195 + (i % 6) * 22, y: 320 + ((i / 6) | 0) * 22 });
 const spawn = () => SPAWNS[(Math.random() * SPAWNS.length) | 0];
 
 function send(p, o) { try { p.ws.send(JSON.stringify(o)); } catch {} }
@@ -50,7 +50,7 @@ wss.on('connection', (ws) => {
       bcast({ t: 'spawn', p: ent(p) }, id);
     } else if (m.t === 'state') {
       p.x = +m.x || 0; p.y = +m.y || 0; p.a = +m.a || 0;
-      p.car = m.car ? 1 : 0; p.vt = m.vt | 0; p.vy = +m.vy || 0; p.tu = +m.tu || 0; p.wi = m.wi | 0;
+      p.car = m.car ? 1 : 0; p.vt = m.vt | 0; p.vy = Math.max(-10, Math.min(120, +m.vy || 0)); p.tu = +m.tu || 0; p.wi = m.wi | 0;
       p.vx = Math.max(-120, Math.min(120, +m.vx || 0)); p.vz = Math.max(-120, Math.min(120, +m.vz || 0));
       p.cc = /^#[0-9a-f]{6}$/i.test(m.cc) ? m.cc : p.cc;
     } else if (m.t === 'shot') {
