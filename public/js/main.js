@@ -251,16 +251,25 @@ function saveSettings() { try { localStorage.setItem('viceSettings', JSON.string
 let scoped = false;
 camera.fov = settings.fov; camera.updateProjectionMatrix();
 
-function spawnMe(x, z) { me.pos.set(x, city.groundH(x, z), z); me.alive = true; me.hp = 100; me.wanted = 0; me.heat = 0; me.lastCrime = 0; closeChute(); if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = true; camPivot = null; }
+function spawnMe(x, z) { me.pos.set(x, city.groundH(x, z), z); me.alive = true; me.hp = 100; me.wanted = 0; me.heat = 0; me.lastCrime = 0; me.passengerOf = null; closeChute(); if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = true; camPivot = null; }
 
 let fDown = false, vDown = false, mDown = false, mapOpen = false;
 function toggleCar() {
+  if (me.passengerOf) {                                  // hop out of a friend's car
+    const r = remotes.get(me.passengerOf); me.passengerOf = null; me.onGround = true; me.char.group.visible = !me.fp; resetPose();
+    if (r) me.pos.set(r.dx + Math.cos(r.da) * 2.6, city.groundH(r.dx, r.dz), r.dz - Math.sin(r.da) * 2.6);
+    return;
+  }
   if (me.inCar) { const c = me.inCar; c.occupant = null; const ox = Math.cos(c.heading + Math.PI / 2) * 2.6, oz = Math.sin(c.heading + Math.PI / 2) * 2.6; me.pos.set(c.x + ox, c.type === 'heli' ? c.y : 0, c.z + oz); if (c.type === 'heli') { me.vy = 0; me.onGround = c.y < 0.5; } me.inCar = null; me.char.group.visible = !me.fp; resetPose(); engine(); return; }
   let best = null, bd = 6, bestT = null;
   for (const c of cars) { if (c.occupant) continue; const d = Math.hypot(c.x - me.pos.x, c.z - me.pos.z); if (d < bd) { bd = d; best = c; bestT = null; } }
   for (const t of traffic) { const d = Math.hypot(t.x - me.pos.x, t.z - me.pos.z); if (d < bd) { bd = d; bestT = t; best = null; } } // jack any moving car too
   if (bestT) best = jackTraffic(bestT);
-  if (best) { best.occupant = 'me'; me.inCar = best; me.char.group.visible = false; }
+  if (best) { best.occupant = 'me'; me.inCar = best; me.char.group.visible = false; return; }
+  // no empty vehicle nearby → try to ride shotgun in a nearby player's car
+  let pr = null, pd = 5;
+  for (const r of remotes.values()) { if (r.alive && (r.vt | 0) === 1) { const d = Math.hypot(r.dx - me.pos.x, r.dz - me.pos.z); if (d < pd) { pd = d; pr = r; } } }
+  if (pr) { me.passengerOf = pr.id; notice('🚗 Passenger — F to hop out'); }
 }
 function jackTraffic(t) {
   const heading = t.axis === 'x' ? (t.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (t.dir > 0 ? 0 : Math.PI);
@@ -298,6 +307,65 @@ function driveCar(c, dt) {
   c.group.position.set(c.x, tt.y, c.z);
   c.group.rotation.order = 'YXZ'; c.group.rotation.set(c.pitch + tt.pitch, c.heading, c.roll + tt.roll);
   for (const w of c.wheels) w.rotation.x += vF * dt * 2;
+}
+
+// ---- motorcycle with wheelies + air tricks ----
+function driveBike(c, dt) {
+  const thr = axisY(), steer = axisX();
+  const fwd = new THREE.Vector3(Math.sin(c.heading), 0, Math.cos(c.heading));
+  const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
+  let vF = c.vx * fwd.x + c.vz * fwd.z, vL = c.vx * right.x + c.vz * right.z;
+  const onGround = !c.air;
+  const accel = (me.turbo ? 82 : 44), top = (me.turbo ? 100 : 54), rev = 16;
+  if (onGround) { if (thr > 0) vF += accel * dt; else if (thr < 0) vF -= accel * 0.7 * dt; vF -= vF * (thr === 0 ? 0.55 : 0.1) * dt; }
+  else vF -= vF * 0.03 * dt;                              // keep momentum through the air
+  vF = Math.max(-rev, Math.min(top, vF));
+  vL -= vL * Math.min(1, 8 * dt);
+  c.vx = fwd.x * vF + right.x * vL; c.vz = fwd.z * vF + right.z * vL;
+  const sf = Math.max(-1, Math.min(1, vF / 6));
+  if (onGround) c.heading -= steer * 3.0 * dt * sf;
+  c.speed = vF;
+  let nx = c.x + c.vx * dt, nz = c.z + c.vz * dt;
+  [nx, nz] = resolve(nx, nz, 1.4);
+  if (!city.isLandCell(nx, nz)) { nx = c.x; nz = c.z; c.vx *= 0.35; c.vz *= 0.35; }
+  c.x = Math.max(2, Math.min(WORLD.SIZE - 2, nx)); c.z = Math.max(2, Math.min(WORLD.SIZE - 2, nz));
+  const gY = city.groundH(c.x, c.z);
+  if (onGround) {
+    c.vy = 0; c.y = gY;
+    for (const rp of bikeRamps) {                        // launch off a ramp / pad when carrying speed
+      if (Math.abs(c.x - rp.x) < rp.r && Math.abs(c.z - rp.z) < rp.r && Math.abs(vF) > 8) {
+        c.air = true; c.vy = rp.power + Math.min(14, Math.abs(vF) * 0.28); c.airPitch = 0; c.airYaw = 0; c.wheelie = 0; break;
+      }
+    }
+    const wt = (keys.has('Space') && vF > 3) ? -0.98 : (thr < 0 && vF > 8 ? 0.35 : 0);   // Space = wheelie (rear up)
+    c.wheelie = THREE.MathUtils.lerp(c.wheelie || 0, wt, Math.min(1, dt * 6));
+    c.airPitch = 0; c.airYaw = 0;
+    c.roll = THREE.MathUtils.lerp(c.roll || 0, steer * sf * 0.5, 0.2);
+    const tt = terrainTilt(c);
+    c.group.position.set(c.x, gY, c.z);
+    c.group.rotation.order = 'YXZ'; c.group.rotation.set((c.wheelie || 0) + tt.pitch, c.heading, c.roll + tt.roll);
+  } else {
+    c.vy -= 26 * dt; c.y = (c.y != null ? c.y : gY) + c.vy * dt;
+    c.airPitch += thr * 5.4 * dt;                         // W/S = flips
+    c.airYaw += steer * 5.0 * dt;                         // A/D = spins
+    if (c.y <= gY) {                                      // touchdown
+      c.y = gY; c.air = false; c.vy = 0; reportBikeTrick(c);
+      c.heading += c.airYaw; c.airPitch = 0; c.airYaw = 0; c.roll = 0;
+    }
+    c.group.position.set(c.x, c.y, c.z);
+    c.group.rotation.order = 'YXZ'; c.group.rotation.set(c.airPitch, c.heading + c.airYaw, c.roll);
+  }
+  for (const w of c.wheels) w.rotation.x += vF * dt * 2;
+}
+function reportBikeTrick(c) {
+  const TAU = Math.PI * 2;
+  const flips = Math.floor((Math.abs(c.airPitch || 0) + 0.7) / TAU);
+  const spins = Math.floor((Math.abs(c.airYaw || 0) + 0.7) / TAU);
+  if (!flips && !spins) return;
+  const parts = [];
+  if (flips) parts.push((c.airPitch < 0 ? 'ФРОНТФЛИП' : 'БЭКФЛИП') + (flips > 1 ? ' x' + flips : ''));
+  if (spins) parts.push(spins * 360 + '° СПИН');
+  notice('🤸 ' + parts.join(' + ') + (flips && spins ? ' — БЕЗУМИЕ!' : '!'));
 }
 
 // ---- helicopter ----
@@ -413,12 +481,36 @@ function vehicleHits(c, dt) {
 
 // ---- show the player as a rider sitting on a bike ----
 function showRider(c) {
-  me.char.group.visible = !me.fp;
-  me.char.group.position.set(c.x, city.groundH(c.x, c.z) + 0.18, c.z);
-  me.char.group.rotation.set(0, c.heading, c.roll * 0.6);
+  me.char.group.visible = true;                          // always show the rider on a bike, even in first person
+  const y = (c.y != null ? c.y : city.groundH(c.x, c.z));
+  me.char.group.position.set(c.x, y + 0.18, c.z);
+  me.char.group.rotation.order = 'YXZ';
+  me.char.group.rotation.set((c.airPitch || 0) + (c.wheelie || 0), c.heading + (c.airYaw || 0), c.roll * 0.6);
   const p = me.char.parts;
   p.armL.rotation.set(-1.1, 0, 0.2); p.armR.rotation.set(-1.1, 0, -0.2);
   p.legL.rotation.set(0.5, 0, 0.28); p.legR.rotation.set(0.5, 0, -0.28);
+}
+function seatDriverPose(p) {                              // hands on the wheel, knees up — someone sitting in a car
+  p.armL.rotation.set(-1.25, 0, 0.12); p.armR.rotation.set(-1.25, 0, -0.12);
+  p.legL.rotation.set(-1.35, 0, 0.12); p.legR.rotation.set(-1.35, 0, -0.12);
+}
+function showDriverInCar(c) {                             // local player visible seated in their own car (through the glass)
+  me.char.group.visible = true;
+  me.char.group.position.set(c.x, city.groundH(c.x, c.z) - 0.32, c.z);
+  me.char.group.rotation.order = 'YXZ';
+  me.char.group.rotation.set(c.pitch || 0, c.heading, c.roll || 0);
+  seatDriverPose(me.char.parts);
+}
+function updatePassenger(dt) {                            // riding shotgun in another player's car
+  const r = remotes.get(me.passengerOf);
+  if (!r || !r.alive || (r.vt | 0) !== 1) { me.passengerOf = null; me.char.group.visible = !me.fp; return false; }
+  const cos = Math.cos(r.da), sin = Math.sin(r.da);
+  me.pos.set(r.dx + cos * 0.72, city.groundH(r.dx, r.dz) - 0.32, r.dz - sin * 0.72);   // right-hand seat
+  me.heading = r.da;
+  me.char.group.visible = true; me.char.group.position.copy(me.pos);
+  me.char.group.rotation.order = 'YXZ'; me.char.group.rotation.set(0, r.da, 0);
+  seatDriverPose(me.char.parts);
+  return true;
 }
 function resetPose() { const p = me.char.parts; p.armL.rotation.set(0, 0, 0); p.armR.rotation.set(0, 0, 0); p.legL.rotation.set(0, 0, 0); p.legR.rotation.set(0, 0, 0); }
 
@@ -431,6 +523,10 @@ function updatePlayer(dt) {
   camYaw -= mouse.dx * sens; camPitch = THREE.MathUtils.clamp(camPitch - mouse.dy * sens * (settings.invertY ? -1 : 1), -0.5, 1.1);
   mouse.dx = 0; mouse.dy = 0;
   if (!me.alive) { updateCamera(dt); return; }
+  if (me.passengerOf) {                                   // riding in another player's car — no driving, just ride along
+    if (keys.has('KeyF') && !fDown) { fDown = true; toggleCar(); } if (!keys.has('KeyF')) fDown = false;
+    if (me.passengerOf && updatePassenger(dt)) { engine(0); updateCamera(dt); return; }
+  }
 
   me.aiming = false;
   if (me.inCar) {
@@ -449,11 +545,16 @@ function updatePlayer(dt) {
       driveBoat(v, dt);
       me.pos.set(v.x, 0, v.z); me.heading = v.heading;
       me.char.group.visible = false;
+    } else if (v.type === 'bike') {
+      driveBike(v, dt);
+      vehicleHits(v, dt);
+      me.pos.set(v.x, v.y != null ? v.y : city.groundH(v.x, v.z), v.z); me.heading = v.heading;
+      showRider(v);
     } else {
       driveCar(v, dt);
       vehicleHits(v, dt);
       me.pos.set(v.x, city.groundH(v.x, v.z), v.z); me.heading = v.heading;
-      if (v.type === 'bike') showRider(v); else me.char.group.visible = false;
+      showDriverInCar(v);                                 // player is visible sitting in the car
     }
   } else {
     const swimming = me.swimming = !onLandOrBeach(me.pos.x, me.pos.z);   // only deep water, not the beach
@@ -1060,7 +1161,7 @@ function updateRemotes(dt) {
     const moved = Math.hypot(r.vx || 0, r.vz || 0) > 0.35, vt = r.vt | 0, p = r.char.parts;
     r.car.group.visible = vt === 1 && r.alive; r.bike.group.visible = vt === 2 && r.alive; r.heli.group.visible = vt === 3 && r.alive; r.tank.group.visible = vt === 4 && r.alive; r.boat.group.visible = vt === 5 && r.alive;
     const rgy = city.groundH(r.dx, r.dz);
-    if (vt === 1) { r.car.group.position.set(r.dx, rgy, r.dz); r.car.group.rotation.y = r.da; r.char.group.visible = false; }
+    if (vt === 1) { r.car.group.position.set(r.dx, rgy, r.dz); r.car.group.rotation.y = r.da; r.char.group.visible = r.alive; r.char.group.position.set(r.dx, rgy - 0.32, r.dz); r.char.group.rotation.order = 'YXZ'; r.char.group.rotation.set(0, r.da, 0); seatDriverPose(p); }   // visible driver you can shoot
     else if (vt === 5) { r.boat.group.position.set(r.dx, -0.15, r.dz); r.boat.group.rotation.y = r.da; r.char.group.visible = false; }
     else if (vt === 4) { r.tank.group.position.set(r.dx, rgy, r.dz); r.tank.group.rotation.y = r.da; if (r.tank.turret) r.tank.turret.rotation.y = (r.tu || 0) - r.da; r.char.group.visible = false; }
     else if (vt === 3) { r.heli.group.position.set(r.dx, r.dvy, r.dz); r.heli.group.rotation.y = r.da; if (r.heli.rotor) r.heli.rotor.rotation.y += dt * 32; r.char.group.visible = false; }
@@ -1082,7 +1183,7 @@ function onMsg(m) {
     case 'shot': peerShot(m); break;
     case 'rocket': { const o = new THREE.Vector3(m.x, m.y, m.z), d = new THREE.Vector3(m.dx, m.dy, m.dz); if (d.lengthSq() > 0.0001) spawnRocket(o, d, { speed: m.speed || 58, big: !!m.big, ghost: true }); break; }
     case 'hp': me.hp = m.hp; flash(); shake = Math.max(shake, 0.25); break;
-    case 'dead': if (m.id === me.id) { me.alive = false; closeChute(); if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = false; me.wanted = 0; me.heat = 0; me.lastCrime = 0; $('dead').classList.add('show'); } break;
+    case 'dead': if (m.id === me.id) { me.alive = false; closeChute(); abortRace(); me.passengerOf = null; if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = false; me.wanted = 0; me.heat = 0; me.lastCrime = 0; $('dead').classList.add('show'); } break;
     case 'resp': spawnMe(m.x, m.y); $('dead').classList.remove('show'); break;
     case 'kill': notice(`${m.killer} 💀 ${m.victim}`); break;
     case 'kills': me.kills = m.n; break;
@@ -1360,7 +1461,7 @@ function stockInteriors() {
     if (lm.type === 'police') { addLoot('rifle', x - 4, z - 6); addLoot('shotgun', x, z - 7); addLoot('sniper', x + 4, z - 6); addLoot('rpg', x, z - 3); addLoot('health', x - 5, z); }   // ARMORY
     else if (lm.type === 'hospital') { addLoot('health', x - 4, z - 5); addLoot('health', x + 4, z - 5); addLoot('health', x, z - 6); }                                                    // CLINIC
     else if (lm.type === 'shop') { addLoot('smg', x - 4, z - 5); addLoot('shotgun', x + 4, z - 5); addLoot('health', x, z - 6); }                                                          // STORE
-    else if (lm.type === 'school') { for (const dx of [-6, 0, 6]) makeJumpPad(x + dx, z + 10); }                                                                                          // PLAYGROUND
+    else if (lm.type === 'school') { for (const dx of [-7, 0, 7]) { const px = x + dx, pz = z + 20; if (city.isLandCell(px, pz) && !insideBuilding(px, pz)) makeJumpPad(px, pz); } }   // PLAYGROUND (outside, open air)
   }
 }
 
@@ -1384,7 +1485,7 @@ function updateJumpPads(dt) {
 }
 
 // ---- timed checkpoint race circuit (run it with friends: everyone sees the gates & each other) ----
-const RACE = { pts: [], active: false, next: 0, t0: 0, best: null, lastTrig: 0 };
+const RACE = { pts: [], active: false, next: 0, t0: 0, best: null, lastTrig: 0, armed: true };
 function makeCheckpoint(x, z) {
   const gy = city.groundH(x, z), g = new THREE.Group();
   const ring = new THREE.Mesh(new THREE.TorusGeometry(5, 0.42, 8, 30), new THREE.MeshStandardMaterial({ color: 0xffc400, emissive: 0xffc400, emissiveIntensity: 0.9 }));
@@ -1404,8 +1505,9 @@ function buildRace() {
     if (city.isLandCell(x, z)) RACE.pts.push(makeCheckpoint(x, z));
   }
 }
+function abortRace() { RACE.active = false; RACE.next = 0; RACE.armed = false; }   // called on death — don't record a time that includes the death/respawn wait
 function finishRace() {
-  const t = (performance.now() - RACE.t0) / 1000; RACE.active = false; RACE.next = 0;
+  const t = (performance.now() - RACE.t0) / 1000; RACE.active = false; RACE.next = 0; RACE.armed = false;
   const rec = RACE.best == null || t < RACE.best; if (rec) RACE.best = t;
   notice('🏁 Финиш! ' + t.toFixed(1) + 'с' + (rec ? ' — рекорд!' : ''));
   try { net.send({ t: 'chat', m: '🏁 прошёл(ла) гонку за ' + t.toFixed(1) + 'с' + (RACE.best != null ? ' (лучшее ' + RACE.best.toFixed(1) + 'с)' : '') }); } catch {}
@@ -1422,11 +1524,11 @@ function updateRace(dt) {
   }
   if (me.alive) {
     const tgt = RACE.pts[tgtIdx], now = performance.now();
+    if (!RACE.active && Math.hypot(me.pos.x - RACE.pts[0].x, me.pos.z - RACE.pts[0].z) > 9) RACE.armed = true;   // re-arm once clear of the start ring (no instant restart after finishing)
     if (Math.hypot(me.pos.x - tgt.x, me.pos.z - tgt.z) < 6.5 && now - RACE.lastTrig > 300) {
-      RACE.lastTrig = now;
-      if (!RACE.active) { RACE.active = true; RACE.t0 = now; RACE.next = 1 % RACE.pts.length; notice('🏁 Поехали!'); }
-      else if (RACE.next === 0) finishRace();
-      else { RACE.next = (RACE.next + 1) % RACE.pts.length; notice(RACE.next === 0 ? 'Последний круг → к старту!' : ('Чекпоинт ' + RACE.next + '/' + (RACE.pts.length - 1))); }
+      if (!RACE.active) { if (RACE.armed) { RACE.active = true; RACE.t0 = now; RACE.next = 1 % RACE.pts.length; RACE.armed = false; RACE.lastTrig = now; notice('🏁 Поехали!'); } }
+      else if (RACE.next === 0) { RACE.lastTrig = now; finishRace(); }
+      else { RACE.lastTrig = now; RACE.next = (RACE.next + 1) % RACE.pts.length; notice(RACE.next === 0 ? 'Последний круг → к старту!' : ('Чекпоинт ' + RACE.next + '/' + (RACE.pts.length - 1))); }
     }
   }
   updateRaceHud();
@@ -1446,9 +1548,41 @@ function updateRaceHud() {
     if (near) raceHud.innerHTML = '🏁 <b>ГОНКА</b> — заедь в золотое кольцо, чтобы стартовать' + (RACE.best != null ? ' · рекорд ' + RACE.best.toFixed(1) + 'с' : '');
   }
 }
+// ---- bike stunt park: ramps that launch you for flips & spins ----
+const bikeRamps = [];
+function makeRamp(x, z, heading) {
+  const gy = city.groundH(x, z), g = new THREE.Group();
+  const L = 8, W = 5.5, rise = 2.8, ang = Math.atan2(rise, L), hyp = Math.hypot(L, rise);
+  const deckMat = new THREE.MeshStandardMaterial({ color: 0xcf5a2a, roughness: 0.85, metalness: 0.1 });
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(W, 0.35, hyp), deckMat); deck.rotation.x = -ang; deck.position.set(0, rise / 2, 0); deck.castShadow = true; deck.receiveShadow = true; g.add(deck);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(W * 0.16, 0.06, hyp * 0.9), new THREE.MeshStandardMaterial({ color: 0xffd23c, emissive: 0xffd23c, emissiveIntensity: 0.45 })); stripe.rotation.x = -ang; stripe.position.set(0, rise / 2 + 0.19, 0); g.add(stripe);
+  for (const sx of [-1, 1]) { const side = new THREE.Mesh(new THREE.BoxGeometry(0.25, rise, L), deckMat); side.position.set(sx * W / 2, rise / 2 - 0.2, -0.3); g.add(side); }
+  g.position.set(x, gy, z); g.rotation.y = heading; scene.add(g);
+  bikeRamps.push({ x, z, r: 4.2, power: 16 });
+}
+function buildTrickZone() {
+  const A = city.islands.A, R = 15;
+  const open = (x, z) => city.isLandCell(x, z) && !insideBuilding(x, z);
+  // scan island A for the most open 5-point cluster (center + 4 ramp spots) so the whole park fits in the clear
+  let best = { x: A.cx, z: A.cz }, bestScore = -1;
+  for (let ax = A.cx - A.r * 0.75; ax <= A.cx + A.r * 0.75; ax += 20)
+    for (let az = A.cz - A.r * 0.75; az <= A.cz + A.r * 0.75; az += 20) {
+      if (!open(ax, az)) continue;
+      let s = 0; for (const [dx, dz] of [[0, 0], [0, -R], [0, R], [-R, 0], [R, 0]]) if (open(ax + dx, az + dz)) s++;
+      if (s > bestScore) { bestScore = s; best = { x: ax, z: az }; }
+    }
+  const cx = best.x, cz = best.z;
+  for (const [rx, rz, h] of [[cx, cz - R, 0], [cx, cz + R, Math.PI], [cx - R, cz, Math.PI / 2], [cx + R, cz, -Math.PI / 2]])
+    if (open(rx, rz)) makeRamp(rx, rz, h);
+  if (open(cx, cz)) makeJumpPad(cx, cz);
+  const sign = makeTag('🏍 STUNT PARK', '#ffcf3c'); sign.scale.set(9, 2.3, 1); sign.position.set(cx, city.groundH(cx, cz) + 6.5, cz); scene.add(sign);
+  return { x: cx, z: cz };
+}
+let trickZone = null;
 function initActivities() {
   stockInteriors();
   buildRace();
+  trickZone = buildTrickZone();
   const A = city.islands.A;
   for (const p of [[A.cx - 60, A.cz], [A.cx + 60, A.cz - 20], [A.cx, A.cz + 70], [A.cx - 30, A.cz - 60], [A.cx + 40, A.cz + 40]]) {
     if (city.isLandCell(p[0], p[1]) && !insideBuilding(p[0], p[1])) makeJumpPad(p[0], p[1]);
@@ -1467,4 +1601,4 @@ function loop() {
 spawnPickups();
 initActivities();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, EMOTES, openEmoteWheel, closeEmoteWheel, emoteSelectTick, getEmote: () => ({ open: emoteOpen, sel: emoteSel, emote: me.emote }), resolveFoot, supportHeight, deployChute, closeChute, updateParachute, waterAnimated: () => !!waterUniforms, RACE, jumpPads, updateRace, updateJumpPads, buildRace, stockInteriors, initActivities, camDistClamp, insideBuilding, render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, EMOTES, openEmoteWheel, closeEmoteWheel, emoteSelectTick, getEmote: () => ({ open: emoteOpen, sel: emoteSel, emote: me.emote }), resolveFoot, supportHeight, deployChute, closeChute, updateParachute, waterAnimated: () => !!waterUniforms, RACE, jumpPads, updateRace, updateJumpPads, buildRace, stockInteriors, initActivities, camDistClamp, insideBuilding, driveBike, bikeRamps, updatePassenger, showRider, showDriverInCar, abortRace, get trickZone() { return trickZone; }, render: () => renderer.render(scene, camera) };

@@ -254,8 +254,8 @@ export function makeCar(color = 0xd23b3b, police = false) {
   body.position.y = 0.65; body.castShadow = true; g.add(body);
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.6, 2.0), STD(color, { roughness: 0.5, metalness: 0.2 }));
   cabin.position.set(0, 1.15, -0.15); cabin.castShadow = true; g.add(cabin);
-  const glass = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.5, 1.85), STD(0x16242e, { roughness: 0.2, metalness: 0.4 }));
-  glass.position.set(0, 1.18, -0.15); g.add(glass);
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(1.56, 0.54, 1.9), new THREE.MeshStandardMaterial({ color: 0x22323f, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.4 }));
+  glass.position.set(0, 1.2, -0.15); g.add(glass);   // see-through so you can shoot the driver
   const hl = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.18, 0.1), new THREE.MeshStandardMaterial({ color: 0xfff6cf, emissive: 0xfff0b0, emissiveIntensity: 0.8 }));
   hl.position.set(0, 0.62, 2.1); g.add(hl);
   const tl = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.16, 0.1), new THREE.MeshStandardMaterial({ color: 0x550000, emissive: 0xff1a1a, emissiveIntensity: 0.6 }));
