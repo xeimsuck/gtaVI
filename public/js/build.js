@@ -398,7 +398,7 @@ export function makeChar(shirt = 0x3aa0ff, opts = {}) {
   const preset = opts.preset, fox = preset === 'fox', marina = preset === 'marina';
   const fem = fox ? false : (marina || opts.gender === 'f');
   if (fox) shirt = 0xdf6b2e; else if (marina) shirt = 0x2a2f3a;
-  const skin = fox ? 0xdf6b2e : marina ? 0xf1c27d : (opts.skin != null ? opts.skin : SKIN[(Math.random() * SKIN.length) | 0]);
+  const skin = fox ? 0xdf6b2e : marina ? 0xe6c6a4 : (opts.skin != null ? opts.skin : SKIN[(Math.random() * SKIN.length) | 0]);
   const pants = fox ? 0xc85a24 : marina ? 0x1e2129 : (opts.pants != null ? opts.pants : 0x2c3e50);
   const hairCol = fox ? 0x8a3f16 : marina ? 0x4a2f1a : (opts.hair != null ? opts.hair : 0x20140d);
   const limb = (w, h, d, c) => { const grp = new THREE.Group(); const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), STD(c)); m.position.y = -h / 2; m.castShadow = true; grp.add(m); return grp; };
@@ -407,7 +407,16 @@ export function makeChar(shirt = 0x3aa0ff, opts = {}) {
   if (fem) { const chest = new THREE.Mesh(new THREE.BoxGeometry(shW * 0.82, 0.17, 0.16), STD(shirt)); chest.position.set(0, 1.19, 0.17); g.add(chest); }
   if (fox) { const belly = new THREE.Mesh(new THREE.BoxGeometry(shW * 0.6, 0.55, 0.06), STD(0xf6ece0)); belly.position.set(0, 1.12, 0.16); g.add(belly); }
   const hips = new THREE.Mesh(new THREE.BoxGeometry(hipW, 0.28, 0.32), STD(pants)); hips.position.y = 0.74; g.add(hips);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.32), STD(skin)); head.position.y = 1.72; head.castShadow = true; g.add(head);
+  let head;
+  if (marina) {                                          // photo face on the front (+z) of a slightly larger head
+    const sk = STD(skin);
+    const faceMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.92, metalness: 0 });
+    new THREE.TextureLoader().load('/marina.jpg', t => { t.colorSpace = THREE.SRGBColorSpace; faceMat.map = t; faceMat.color.set(0xffffff); faceMat.needsUpdate = true; });
+    head = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.32), [sk, sk, sk, sk, faceMat, sk]);
+  } else {
+    head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.32), STD(skin));
+  }
+  head.position.y = 1.72; head.castShadow = true; g.add(head);
   if (fox) {
     for (const sx of [-1, 1]) {
       const ear = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.34, 4), STD(0xdf6b2e)); ear.position.set(sx * 0.12, 2.02, -0.02); ear.rotation.z = sx * -0.22; ear.castShadow = true; g.add(ear);
@@ -417,12 +426,14 @@ export function makeChar(shirt = 0x3aa0ff, opts = {}) {
     const nose = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.08, 0.08), STD(0x1a1210)); nose.position.set(0, 1.69, 0.28); g.add(nose);
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.95, 6), STD(0xdf6b2e)); tail.position.set(0, 0.82, -0.42); tail.rotation.x = -2.35; tail.castShadow = true; g.add(tail);
     const ttip = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.3, 6), STD(0xf6ece0)); ttip.position.set(0, 0.5, -0.78); ttip.rotation.x = -2.35; g.add(ttip);
-  } else if (marina) {
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.16, 0.37), STD(hairCol)); cap.position.y = 1.9; cap.castShadow = true; g.add(cap);
-    const bun = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), STD(hairCol)); bun.position.set(0, 1.93, -0.2); bun.castShadow = true; g.add(bun);
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.045, 0.04), STD(0x0e0e12)); bar.position.set(0, 1.75, 0.17); g.add(bar);
-    const lensMat = new THREE.MeshStandardMaterial({ color: 0x223047, transparent: true, opacity: 0.55, flatShading: true });
-    for (const sx of [-1, 1]) { const rim = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.12, 0.03), STD(0x0e0e12)); rim.position.set(sx * 0.09, 1.75, 0.17); g.add(rim); const lens = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.09, 0.03), lensMat); lens.position.set(sx * 0.09, 1.75, 0.185); g.add(lens); }
+  } else if (marina) {                                   // voluminous greying wavy hair framing the photo face
+    const hcol = 0x968b7d;
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.24, 0.44), STD(hcol)); crown.position.set(0, 1.99, -0.03); crown.castShadow = true; g.add(crown);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.44, 0.18), STD(hcol)); back.position.set(0, 1.72, -0.2); back.castShadow = true; g.add(back);
+    for (const sx of [-1, 1]) {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.46, 0.4), STD(hcol)); side.position.set(sx * 0.23, 1.68, -0.04); side.castShadow = true; g.add(side);
+      const wave = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.14), STD(hcol)); wave.position.set(sx * 0.2, 1.45, 0.06); g.add(wave);
+    }
   } else if (opts.hat) {
     const crown = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.4), STD(hairCol)); crown.position.y = 1.96; crown.castShadow = true; g.add(crown);
     const brim = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.26), STD(hairCol)); brim.position.set(0, 1.9, 0.3); g.add(brim);

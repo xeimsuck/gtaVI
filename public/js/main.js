@@ -126,7 +126,7 @@ const CARC = [0xe74c3c, 0x2980b9, 0x27ae60, 0xf1c40f, 0xecf0f1, 0x34495e, 0xe67e
 const cars = [];
 (function spawnCars() {
   const r = () => Math.random();
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < 14; i++) {
     const sp = city.spawns[(r() * city.spawns.length) | 0] || { x: 60, z: 60 };
     const colHex = CARC[i % CARC.length];
     const c = makeCar(colHex);
@@ -140,7 +140,7 @@ const cars = [];
 // ---------- motorcycles ----------
 (function spawnBikes() {
   const r = () => Math.random();
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < 5; i++) {
     const sp = city.spawns[(r() * city.spawns.length) | 0] || { x: 80, z: 80 };
     const colHex = CARC[(i * 3) % CARC.length];
     const b = makeBike(colHex);
@@ -829,10 +829,10 @@ function spawnOneTraffic(nearPlayer) {
   if (!city.isLandCell(x, z)) return false;
   const colHex = TCOL[tcolI++ % TCOL.length], car = makeCar(colHex);
   car.group.position.set(x, 0, z); scene.add(car.group);
-  traffic.push({ car, colHex, x, z, axis: onX ? 'x' : 'z', dir: Math.random() < 0.5 ? 1 : -1, lane, speed: 8 + Math.random() * 8, turnT: 2 + Math.random() * 4 });
+  traffic.push({ car, colHex, x, z, axis: onX ? 'x' : 'z', dir: Math.random() < 0.5 ? 1 : -1, lane, speed: 6 + Math.random() * 5, turnT: 2 + Math.random() * 4 });
   return true;
 }
-(function spawnTraffic() { for (let i = 0; i < 12; i++) spawnOneTraffic(false); })();
+(function spawnTraffic() { for (let i = 0; i < 6; i++) spawnOneTraffic(false); })();
 function updateTraffic(dt) {
   for (const t of traffic) {
     if (t.knockT > 0) {                                // got hit — tumble out before resuming the lane
@@ -850,7 +850,7 @@ function updateTraffic(dt) {
     t.car.group.position.set(t.x, city.groundH(t.x, t.z), t.z);
     for (const w of t.car.wheels) w.rotation.x += t.speed * dt * 2;
   }
-  let g = 0; while (traffic.length < 12 && g++ < 3) if (!spawnOneTraffic(true)) break;   // refill destroyed/jacked traffic
+  let g = 0; while (traffic.length < 6 && g++ < 2) if (!spawnOneTraffic(true)) break;   // refill destroyed/jacked traffic
 }
 
 // ---------- cops + wanted ----------
@@ -958,7 +958,8 @@ const stationCops = [], schoolKids = [];
 function spawnKid(school) {
   const ch = makeChar(PED_COLORS[(Math.random() * PED_COLORS.length) | 0]); ch.group.scale.set(0.6, 0.6, 0.6);
   const x = school.x + (Math.random() - 0.5) * 24, z = school.z + 18 + (Math.random() - 0.5) * 16; ch.group.position.set(x, 0, z); scene.add(ch.group);
-  schoolKids.push({ char: ch, x, z, heading: Math.random() * 6.28, speed: 2.6 + Math.random() * 1.6, walkT: 0, retarget: 0, alive: true, removeAt: 0,
+  const heading = Math.random() * 6.28;
+  schoolKids.push({ char: ch, x, z, heading, targetHeading: heading, speed: 1.3 + Math.random() * 1.0, walkT: 0, retarget: 0, alive: true, removeAt: 0,
     die() { this.alive = false; this.char.group.rotation.set(0, this.heading, Math.PI / 2); this.char.group.position.y = 0.18; this.removeAt = performance.now() + 9000; } });
 }
 function spawnStationCop(police) {
@@ -976,9 +977,9 @@ function spawnStationCop(police) {
       c.heading = Math.PI; c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = 0x1a2740; c.occupant = null; c.roll = 0; c.pitch = 0; c.type = 'car';
       c.group.position.set(c.x, city.groundH(c.x, c.z), c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c);
     }
-    for (let i = 0; i < 5; i++) spawnStationCop(police);
+    for (let i = 0; i < 3; i++) spawnStationCop(police);
   }
-  if (school) for (let i = 0; i < 11; i++) spawnKid(school);
+  if (school) for (let i = 0; i < 5; i++) spawnKid(school);
 })();
 function updateStationCops(dt) {
   const police = city.landmarks.find(l => l.type === 'police');
@@ -998,10 +999,12 @@ function updateSchoolKids(dt) {
   for (let i = schoolKids.length - 1; i >= 0; i--) {
     const k = schoolKids[i];
     if (!k.alive) { if (performance.now() > k.removeAt) { scene.remove(k.char.group); schoolKids.splice(i, 1); spawnKid(school); } continue; }
-    k.retarget -= dt; k.walkT += dt * 10;
-    if (k.retarget <= 0) { k.retarget = 0.8 + Math.random() * 1.8; k.heading += (Math.random() - 0.5) * 3; }
+    k.retarget -= dt; k.walkT += dt * k.speed * 4;
+    if (k.retarget <= 0) { k.retarget = 2.5 + Math.random() * 3; k.targetHeading += (Math.random() - 0.5) * 1.4; }
+    let dh = k.targetHeading - k.heading; while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
+    k.heading += dh * Math.min(1, dt * 3);              // smooth turning, no frantic jitter
     const nx = k.x + Math.sin(k.heading) * k.speed * dt, nz = k.z + Math.cos(k.heading) * k.speed * dt;
-    if (Math.hypot(nx - cx, nz - cz) > 22 || insideBuilding(nx, nz)) k.heading += Math.PI + (Math.random() - 0.5);
+    if (Math.hypot(nx - cx, nz - cz) > 22 || insideBuilding(nx, nz)) k.targetHeading += Math.PI + (Math.random() - 0.5);
     else { k.x = nx; k.z = nz; }
     k.char.group.position.set(k.x, city.groundH(k.x, k.z), k.z); k.char.group.rotation.y = k.heading; k.char.setPose(k.walkT, true, false);
   }
