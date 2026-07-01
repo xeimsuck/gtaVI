@@ -153,12 +153,24 @@ const WEAPONS = {
 };
 const WORDER = ['fists', 'pistol', 'smg', 'shotgun', 'rifle', 'sniper', 'rpg', 'homing'];
 const owns = w => w === 'fists' || w === 'pistol' || me.ammo[w] > 0;
+// ---------- emotes (radial wheel) — each anim(parts, t) poses the character ----------
+const EMOTES = [
+  { name: 'Wave', icon: '👋', anim: (p, t) => { p.armR.rotation.set(-2.6, 0, -0.3 + Math.sin(t * 9) * 0.45); p.armL.rotation.set(0, 0, 0); } },
+  { name: 'Cheer', icon: '🙌', anim: (p, t) => { const s = Math.abs(Math.sin(t * 7)) * 0.25; p.armL.rotation.set(-2.9 - s, 0, 0.3); p.armR.rotation.set(-2.9 - s, 0, -0.3); } },
+  { name: 'Point', icon: '👉', anim: (p) => { p.armR.rotation.set(-1.55, 0, -0.05); p.armL.rotation.set(0, 0, 0); } },
+  { name: 'Dance', icon: '🕺', anim: (p, t) => { const s = Math.sin(t * 8); p.armL.rotation.set(-1.4 + s * 0.9, 0, 0.5); p.armR.rotation.set(-1.4 - s * 0.9, 0, -0.5); p.legL.rotation.set(Math.max(0, s) * 0.5, 0, 0); p.legR.rotation.set(Math.max(0, -s) * 0.5, 0, 0); } },
+  { name: 'Cry', icon: '😭', anim: (p, t) => { const s = Math.sin(t * 12) * 0.08; p.armL.rotation.set(-2.4 + s, 0, 0.55); p.armR.rotation.set(-2.4 - s, 0, -0.55); } },
+  { name: 'Salute', icon: '🫡', anim: (p) => { p.armR.rotation.set(-2.75, 0, -0.55); p.armL.rotation.set(0, 0, 0); } },
+  { name: 'Facepalm', icon: '🤦', anim: (p) => { p.armR.rotation.set(-2.7, 0, 0.35); p.armL.rotation.set(0, 0, 0); } },
+  { name: 'Laugh', icon: '😂', anim: (p, t) => { const s = Math.sin(t * 11) * 0.25; p.armL.rotation.set(-0.9, 0, 0.25 + s); p.armR.rotation.set(-0.9, 0, -0.25 - s); } },
+];
+const EMOTE_DUR = 3.2;
 const me = {
   id: null, name: 'Player', colorHex: 0x3aa0ff,
   pos: new THREE.Vector3(250, 0, 370), heading: 0, vy: 0, onGround: true,
   hp: 100, alive: true, kills: 0, inCar: null, aiming: false, walkT: 0, shootCd: 0, fp: false,
   weapon: 'pistol', ammo: { pistol: Infinity, smg: 0, shotgun: 0, rifle: 0, sniper: 0, rpg: 0, homing: 0 },
-  wanted: 0, heat: 0, lastCrime: 0, lockTarget: null, lockT: 0, locked: false,
+  wanted: 0, heat: 0, lastCrime: 0, lockTarget: null, lockT: 0, locked: false, emote: null, emoteT0: 0,
   look: { shirt: '#3aa0ff', skin: '#e0ac69', hair: '#20140d', pants: '#2c3e50', hat: false, gender: 'm' },
   char: null,
 };
@@ -352,6 +364,7 @@ function showRider(c) {
 function resetPose() { const p = me.char.parts; p.armL.rotation.set(0, 0, 0); p.armR.rotation.set(0, 0, 0); p.legL.rotation.set(0, 0, 0); p.legR.rotation.set(0, 0, 0); }
 
 function updatePlayer(dt) {
+  if (emoteOpen) emoteSelectTick();                    // wheel open: mouse picks an emote (consumes look deltas)
   // mouse look (sensitivity + invert-Y + scope zoom, all from settings)
   scoped = !me.inCar && me.alive && mouse.right && !!WEAPONS[me.weapon].scope;
   document.body.classList.toggle('scoped', scoped); $('scope').classList.toggle('show', scoped);
@@ -362,6 +375,7 @@ function updatePlayer(dt) {
 
   me.aiming = false;
   if (me.inCar) {
+    me.emote = null;
     const v = me.inCar;
     if (v.type === 'heli') {
       driveHeli(v, dt);
@@ -412,6 +426,7 @@ function updatePlayer(dt) {
       me.char.group.rotation.set(0, me.heading, 0);
       me.walkT += dt * (moving ? (keys.has('ShiftLeft') ? 1.5 : 1) : 0);
       me.char.setPose(me.walkT, moving, me.aiming);
+      if (me.emote != null) { const et = (performance.now() - me.emoteT0) / 1000; if (et > EMOTE_DUR) me.emote = null; else EMOTES[me.emote].anim(me.char.parts, et); }
       if (me.punchT > 0) { me.punchT -= dt; me.char.parts.armR.rotation.set(-1.5, 0, 0); }
     }
     engine(0);
@@ -946,7 +961,7 @@ function applySnap(list) {
   for (const o of list) {
     if (o.id === me.id) { me.kills = o.kills | 0; continue; }
     let r = remotes.get(o.id); if (!r) { addRemote(o); r = remotes.get(o.id); }
-    r.x = o.x; r.z = o.y; r.a = o.a; r.inCar = !!o.car; r.vt = o.vt | 0; r.vy = o.vy || 0; r.tu = o.tu || 0; r.vx = o.vx || 0; r.vz = o.vz || 0; r.alive = o.alive !== false; r.kills = o.kills | 0; r.name = o.name;
+    r.x = o.x; r.z = o.y; r.a = o.a; r.inCar = !!o.car; r.vt = o.vt | 0; r.vy = o.vy || 0; r.tu = o.tu || 0; r.em = o.em | 0; r.vx = o.vx || 0; r.vz = o.vz || 0; r.alive = o.alive !== false; r.kills = o.kills | 0; r.name = o.name;
     const cch = parseInt((o.cc || '#cccccc').slice(1), 16);
     if (cch !== r.ccHex) { r.ccHex = cch; const vis = r.car.group.visible; scene.remove(r.car.group); disposeGroup(r.car.group); r.car = makeCar(cch); r.car.group.visible = vis; scene.add(r.car.group); }
     if (o.wi != null && o.wi !== r.wi) { r.wi = o.wi | 0; r.char.setWeapon(WORDER[r.wi] || 'pistol'); }
@@ -965,7 +980,7 @@ function updateRemotes(dt) {
     else if (vt === 4) { r.tank.group.position.set(r.dx, 0, r.dz); r.tank.group.rotation.y = r.da; if (r.tank.turret) r.tank.turret.rotation.y = (r.tu || 0) - r.da; r.char.group.visible = false; }
     else if (vt === 3) { r.heli.group.position.set(r.dx, r.dvy, r.dz); r.heli.group.rotation.y = r.da; if (r.heli.rotor) r.heli.rotor.rotation.y += dt * 32; r.char.group.visible = false; }
     else if (vt === 2) { r.bike.group.position.set(r.dx, 0, r.dz); r.bike.group.rotation.y = r.da; r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0.18, r.dz); r.char.group.rotation.set(0, r.da, 0); p.armL.rotation.set(-1.1, 0, 0.2); p.armR.rotation.set(-1.1, 0, -0.2); p.legL.rotation.set(0.5, 0, 0.28); p.legR.rotation.set(0.5, 0, -0.28); }
-    else { r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0, r.dz); r.char.group.rotation.set(0, r.da, 0); p.legL.rotation.z = 0; p.legR.rotation.z = 0; r.walkT += dt * 6; r.char.setPose(r.walkT, moved, false); }
+    else { r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0, r.dz); r.char.group.rotation.set(0, r.da, 0); p.legL.rotation.z = 0; p.legR.rotation.z = 0; r.walkT += dt * 6; r.char.setPose(r.walkT, moved, false); if (r.em > 0 && EMOTES[r.em - 1]) EMOTES[r.em - 1].anim(p, performance.now() / 1000); }
     r.tag.visible = r.alive; r.tag.position.set(r.dx, (vt === 3 ? r.dvy + 2.6 : vt ? 2.4 : 2.3), r.dz);
   }
 }
@@ -1000,7 +1015,7 @@ function netTick(dt) {
     const vx = (me.pos.x - (me._px ?? me.pos.x)) / interval, vz = (me.pos.z - (me._pz ?? me.pos.z)) / interval;
     me._px = me.pos.x; me._pz = me.pos.z;
     const vt = vtypeCode(me.inCar);
-    net.send({ t: 'state', x: me.pos.x, y: me.pos.z, a: me.heading, car: me.inCar ? 1 : 0, vt, vy: vt === 3 ? me.pos.y : 0, tu: vt === 4 ? camYaw : 0, wi: WORDER.indexOf(me.weapon), vx, vz, cc: '#' + (me.inCar ? me.inCar.colHex : 0xcccccc).toString(16).padStart(6, '0') });
+    net.send({ t: 'state', x: me.pos.x, y: me.pos.z, a: me.heading, car: me.inCar ? 1 : 0, vt, vy: vt === 3 ? me.pos.y : 0, tu: vt === 4 ? camYaw : 0, wi: WORDER.indexOf(me.weapon), em: (!me.inCar && me.emote != null) ? me.emote + 1 : 0, vx, vz, cc: '#' + (me.inCar ? me.inCar.colHex : 0xcccccc).toString(16).padStart(6, '0') });
   }
 }
 
@@ -1209,6 +1224,25 @@ $('settingsClose').onclick = closeSettings;
 $('gear').onclick = openSettings;
 $('menuSettings').onclick = openSettings;
 addEventListener('keydown', e => { if (e.code === 'KeyO' && !captured && playing) { e.preventDefault(); openSettings(); } else if (e.code === 'Escape' && sPanel.classList.contains('show')) { closeSettings(); } });
+
+// ---------- emote wheel (hold B, move mouse, release) ----------
+let emoteOpen = false, emoteSel = -1;
+const emoteVec = { x: 0, y: 0 }, emoteSegs = [];
+(function buildEmoteWheel() {
+  const w = $('emotewheel'); if (!w) return; const N = EMOTES.length, R = 40;
+  EMOTES.forEach((e, i) => { const a = (i / N) * Math.PI * 2; const el = document.createElement('div'); el.className = 'eseg'; el.textContent = e.icon; el.style.left = (50 + Math.sin(a) * R) + '%'; el.style.top = (50 - Math.cos(a) * R) + '%'; w.appendChild(el); emoteSegs.push(el); });
+})();
+function openEmoteWheel() { if (!playing || captured || me.inCar || !me.alive || emoteOpen) return; emoteOpen = true; emoteVec.x = 0; emoteVec.y = 0; emoteSel = -1; emoteSegs.forEach(s => s.classList.remove('sel')); $('emotewheel').classList.add('show'); }
+function closeEmoteWheel() { if (!emoteOpen) return; emoteOpen = false; $('emotewheel').classList.remove('show'); if (emoteSel >= 0) { me.emote = emoteSel; me.emoteT0 = performance.now(); } }
+function emoteSelectTick() {
+  emoteVec.x += mouse.dx; emoteVec.y += mouse.dy; mouse.dx = 0; mouse.dy = 0;
+  const N = EMOTES.length;
+  if (Math.hypot(emoteVec.x, emoteVec.y) > 22) { let idx = Math.round(Math.atan2(emoteVec.x, -emoteVec.y) / (Math.PI * 2 / N)); emoteSel = ((idx % N) + N) % N; } else emoteSel = -1;
+  for (let i = 0; i < emoteSegs.length; i++) emoteSegs[i].classList.toggle('sel', i === emoteSel);
+}
+addEventListener('keydown', e => { if (e.code === 'KeyB' && !e.repeat) openEmoteWheel(); });
+addEventListener('keyup', e => { if (e.code === 'KeyB') closeEmoteWheel(); });
+
 function poll() { fetch('/info').then(r => r.json()).then(d => $('online').textContent = d.players).catch(() => {}); }
 poll(); setInterval(() => { if (!playing) poll(); }, 4000);
 
@@ -1239,4 +1273,4 @@ function loop() {
 }
 spawnPickups();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, EMOTES, openEmoteWheel, closeEmoteWheel, emoteSelectTick, getEmote: () => ({ open: emoteOpen, sel: emoteSel, emote: me.emote }), render: () => renderer.render(scene, camera) };

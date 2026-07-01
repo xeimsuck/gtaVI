@@ -34,7 +34,7 @@ function bcast(o, except) { const s = JSON.stringify(o); for (const p of players
 wss.on('connection', (ws) => {
   const id = 'p' + (NID++);
   const s = spawn();
-  const p = { id, ws, name: 'Player', color: '#ff4d6d', look: null, x: s.x, y: s.y, a: 0, car: 0, vt: 0, vy: 0, tu: 0, wi: 1, vx: 0, vz: 0, cc: '#cccccc', hp: 100, alive: true, kills: 0, deaths: 0, owner: false, respawnAt: 0, joined: false, isAlive: true };
+  const p = { id, ws, name: 'Player', color: '#ff4d6d', look: null, x: s.x, y: s.y, a: 0, car: 0, vt: 0, vy: 0, tu: 0, wi: 1, em: 0, vx: 0, vz: 0, cc: '#cccccc', hp: 100, alive: true, kills: 0, deaths: 0, owner: false, respawnAt: 0, joined: false, isAlive: true };
   players.set(id, p);
   ws.on('pong', () => { p.isAlive = true; });
 
@@ -50,7 +50,7 @@ wss.on('connection', (ws) => {
       bcast({ t: 'spawn', p: ent(p) }, id);
     } else if (m.t === 'state') {
       p.x = +m.x || 0; p.y = +m.y || 0; p.a = +m.a || 0;
-      p.car = m.car ? 1 : 0; p.vt = m.vt | 0; p.vy = Math.max(-10, Math.min(120, +m.vy || 0)); p.tu = +m.tu || 0; p.wi = m.wi | 0;
+      p.car = m.car ? 1 : 0; p.vt = m.vt | 0; p.vy = Math.max(-10, Math.min(120, +m.vy || 0)); p.tu = +m.tu || 0; p.wi = m.wi | 0; p.em = m.em | 0;
       p.vx = Math.max(-120, Math.min(120, +m.vx || 0)); p.vz = Math.max(-120, Math.min(120, +m.vz || 0));
       p.cc = /^#[0-9a-f]{6}$/i.test(m.cc) ? m.cc : p.cc;
     } else if (m.t === 'shot') {
@@ -101,7 +101,7 @@ wss.on('connection', (ws) => {
 });
 
 function sanitizeLook(l) { const hx = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d; l = l || {}; return { shirt: hx(l.shirt, '#3aa0ff'), skin: hx(l.skin, '#e0ac69'), hair: hx(l.hair, '#20140d'), pants: hx(l.pants, '#2c3e50'), hat: !!l.hat, gender: l.gender === 'f' ? 'f' : 'm' }; }
-function ent(p) { return { id: p.id, name: p.name, color: p.color, look: p.look, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, wi: p.wi, vx: p.vx, vz: p.vz, cc: p.cc, hp: p.hp, alive: p.alive, kills: p.kills }; }
+function ent(p) { return { id: p.id, name: p.name, color: p.color, look: p.look, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, wi: p.wi, em: p.em, vx: p.vx, vz: p.vz, cc: p.cc, hp: p.hp, alive: p.alive, kills: p.kills }; }
 
 // 20 Hz snapshot — only joined players exist in the world
 setInterval(() => {
@@ -109,7 +109,7 @@ setInterval(() => {
   for (const p of players.values()) if (!p.alive && p.respawnAt && now > p.respawnAt) { const sp = spawn(); p.alive = true; p.hp = 100; p.x = sp.x; p.y = sp.y; send(p, { t: 'resp', x: p.x, y: p.y }); }
   const live = [...players.values()].filter(p => p.joined);
   if (!live.length) return;
-  const snap = JSON.stringify({ t: 'snap', players: live.map(p => ({ id: p.id, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, wi: p.wi, vx: p.vx, vz: p.vz, cc: p.cc, alive: p.alive, name: p.name, color: p.color, kills: p.kills })) });
+  const snap = JSON.stringify({ t: 'snap', players: live.map(p => ({ id: p.id, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, wi: p.wi, em: p.em, vx: p.vx, vz: p.vz, cc: p.cc, alive: p.alive, name: p.name, color: p.color, kills: p.kills })) });
   for (const p of live) { try { p.ws.send(snap); } catch {} }
 }, 50);
 

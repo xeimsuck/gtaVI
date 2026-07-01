@@ -60,8 +60,11 @@ export function makeCity(scene, seed = 7) {
 
   // ----- bridge between the coasts -----
   const bdx = D.cx - A.cx, bdz = D.cz - A.cz, blen0 = Math.hypot(bdx, bdz), bux = bdx / blen0, buz = bdz / blen0;
-  const pAx = A.cx + bux * (A.r * 0.82), pAz = A.cz + buz * (A.r * 0.82);
-  const pDx = D.cx - bux * (D.r * 0.82), pDz = D.cz - buz * (D.r * 0.82);
+  // march out from each island centre along the bridge line to the REAL (wobbled) coast, then step 10u back inside so the deck lands on solid ground
+  let ta = 0; while (ta < A.r * 1.5 && inA(A.cx + bux * ta, A.cz + buz * ta)) ta += 2;
+  let td = 0; while (td < D.r * 1.5 && inD(D.cx - bux * td, D.cz - buz * td)) td += 2;
+  const pAx = A.cx + bux * Math.max(12, ta - 10), pAz = A.cz + buz * Math.max(12, ta - 10);
+  const pDx = D.cx - bux * Math.max(12, td - 10), pDz = D.cz - buz * Math.max(12, td - 10);
   const bridgeLen = Math.hypot(pDx - pAx, pDz - pAz), bheading = Math.atan2(bux, buz), HALF = 11, perpx = -buz, perpz = bux;
   const onBridge = (x, z) => { const rx = x - pAx, rz = z - pAz, t = rx * bux + rz * buz; if (t < -3 || t > bridgeLen + 3) return false; return Math.abs(rx * perpx + rz * perpz) < HALF; };
   // a wider corridor (incl. the on-ramps into each island) that we keep clear of buildings so you can drive onto the bridge
