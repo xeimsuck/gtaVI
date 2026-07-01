@@ -256,7 +256,10 @@ export function makeCity(scene, seed = 7) {
   if (!spawns.length) spawns.push({ x: A.cx, z: A.cz });
   scene.add(g);
   // ground height for gameplay: terrain on land, but flat (0) on the bridge deck so vehicles sit on it
-  const groundAt = (x, z) => (onBridge(x, z) && !isLand(x, z)) ? bridgeDeckY(x, z) + 0.2 : groundH(x, z);
+  // on the bridge footprint the drive surface follows whichever is higher — the deck or the island terrain — so the
+  // deck-vs-terrain overlap near each coast is one continuous surface (no step, matches the rendered deck), and it
+  // blends into the island road where the terrain rises above the deck.
+  const groundAt = (x, z) => onBridge(x, z) ? Math.max(bridgeDeckY(x, z) + 0.2, groundH(x, z)) : groundH(x, z);
   return { group: g, buildings, spawns, shops, landmarks, isLand, isLandCell, groundH: groundAt, land, landCells, islands: { A, D }, bridge: { ax: pAx, az: pAz, bx: pDx, bz: pDz } };
 }
 
