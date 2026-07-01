@@ -24,8 +24,8 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 const players = new Map();
 let NID = 1;
-const SPAWNS = [];
-for (let i = 0; i < 24; i++) SPAWNS.push({ x: 300 + (i % 6) * 240, y: 300 + ((i / 6) | 0) * 240 });
+const SPAWNS = [];   // central band of the 480×480 island (client world = BLOCK*GRID = 480)
+for (let i = 0; i < 24; i++) SPAWNS.push({ x: 150 + (i % 6) * 36, y: 150 + ((i / 6) | 0) * 36 });
 const spawn = () => SPAWNS[(Math.random() * SPAWNS.length) | 0];
 
 function send(p, o) { try { p.ws.send(JSON.stringify(o)); } catch {} }
@@ -34,7 +34,7 @@ function bcast(o, except) { const s = JSON.stringify(o); for (const p of players
 wss.on('connection', (ws) => {
   const id = 'p' + (NID++);
   const s = spawn();
-  const p = { id, ws, name: 'Player', color: '#ff4d6d', look: null, x: s.x, y: s.y, a: 0, car: 0, vt: 0, vy: 0, cc: '#cccccc', hp: 100, alive: true, kills: 0, deaths: 0, owner: false, respawnAt: 0, joined: false, isAlive: true };
+  const p = { id, ws, name: 'Player', color: '#ff4d6d', look: null, x: s.x, y: s.y, a: 0, car: 0, vt: 0, vy: 0, tu: 0, vx: 0, vz: 0, cc: '#cccccc', hp: 100, alive: true, kills: 0, deaths: 0, owner: false, respawnAt: 0, joined: false, isAlive: true };
   players.set(id, p);
   ws.on('pong', () => { p.isAlive = true; });
 
@@ -50,10 +50,15 @@ wss.on('connection', (ws) => {
       bcast({ t: 'spawn', p: ent(p) }, id);
     } else if (m.t === 'state') {
       p.x = +m.x || 0; p.y = +m.y || 0; p.a = +m.a || 0;
-      p.car = m.car ? 1 : 0; p.vt = m.vt | 0; p.vy = +m.vy || 0; p.cc = /^#[0-9a-f]{6}$/i.test(m.cc) ? m.cc : p.cc;
+      p.car = m.car ? 1 : 0; p.vt = m.vt | 0; p.vy = +m.vy || 0; p.tu = +m.tu || 0;
+      p.vx = Math.max(-120, Math.min(120, +m.vx || 0)); p.vz = Math.max(-120, Math.min(120, +m.vz || 0));
+      p.cc = /^#[0-9a-f]{6}$/i.test(m.cc) ? m.cc : p.cc;
     } else if (m.t === 'shot') {
       if (!p.alive) return;
       bcast({ t: 'shot', id, x: +m.x, y: +m.y, a: +m.a }, id);
+    } else if (m.t === 'rocket') {
+      if (!p.alive) return;
+      bcast({ t: 'rocket', x: +m.x || 0, y: +m.y || 0, z: +m.z || 0, dx: +m.dx || 0, dy: +m.dy || 0, dz: +m.dz || 0, speed: Math.min(200, Math.max(1, +m.speed || 58)), big: m.big ? 1 : 0 }, id);
     } else if (m.t === 'hit') {
       if (!p.alive) return;
       const v = players.get(String(m.id));
@@ -95,8 +100,8 @@ wss.on('connection', (ws) => {
   ws.on('error', () => { players.delete(id); bcast({ t: 'leave', id }); });
 });
 
-function sanitizeLook(l) { const hx = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d; l = l || {}; return { shirt: hx(l.shirt, '#3aa0ff'), skin: hx(l.skin, '#e0ac69'), hair: hx(l.hair, '#20140d'), pants: hx(l.pants, '#2c3e50'), hat: !!l.hat }; }
-function ent(p) { return { id: p.id, name: p.name, color: p.color, look: p.look, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, cc: p.cc, hp: p.hp, alive: p.alive, kills: p.kills }; }
+function sanitizeLook(l) { const hx = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d; l = l || {}; return { shirt: hx(l.shirt, '#3aa0ff'), skin: hx(l.skin, '#e0ac69'), hair: hx(l.hair, '#20140d'), pants: hx(l.pants, '#2c3e50'), hat: !!l.hat, gender: l.gender === 'f' ? 'f' : 'm' }; }
+function ent(p) { return { id: p.id, name: p.name, color: p.color, look: p.look, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, vx: p.vx, vz: p.vz, cc: p.cc, hp: p.hp, alive: p.alive, kills: p.kills }; }
 
 // 20 Hz snapshot — only joined players exist in the world
 setInterval(() => {
@@ -104,7 +109,7 @@ setInterval(() => {
   for (const p of players.values()) if (!p.alive && p.respawnAt && now > p.respawnAt) { const sp = spawn(); p.alive = true; p.hp = 100; p.x = sp.x; p.y = sp.y; send(p, { t: 'resp', x: p.x, y: p.y }); }
   const live = [...players.values()].filter(p => p.joined);
   if (!live.length) return;
-  const snap = JSON.stringify({ t: 'snap', players: live.map(p => ({ id: p.id, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, cc: p.cc, alive: p.alive, name: p.name, color: p.color, kills: p.kills })) });
+  const snap = JSON.stringify({ t: 'snap', players: live.map(p => ({ id: p.id, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, vx: p.vx, vz: p.vz, cc: p.cc, alive: p.alive, name: p.name, color: p.color, kills: p.kills })) });
   for (const p of live) { try { p.ws.send(snap); } catch {} }
 }, 50);
 

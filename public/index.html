@@ -16,6 +16,8 @@
     <div class="sub">drive · shoot · mess around with friends</div>
     <label>NAME</label>
     <input id="name" maxlength="14" placeholder="Tommy" autocomplete="off" />
+    <label>BODY</label>
+    <div id="gendersel" class="seg"><button type="button" data-g="m" class="on">♂ Male</button><button type="button" data-g="f">♀ Female</button></div>
     <label>SHIRT</label>
     <div id="colors" class="swatches"></div>
     <label>SKIN</label>
@@ -25,9 +27,10 @@
     <label>PANTS</label>
     <div id="pantscolors" class="swatches"></div>
     <button id="hattoggle" class="toggle">🧢 Cap: OFF</button>
+    <button id="menuSettings" class="toggle">⚙ Settings</button>
     <button id="play">PLAY</button>
     <div class="online">online: <b id="online">…</b></div>
-    <div class="keys"><b>WASD</b> move/drive · <b>Mouse</b> look · <b>Hold LMB</b> aim+shoot · <b>1–5</b> weapons (5=RPG)<br><b>F</b> enter/exit any vehicle (car · bike · heli) · <b>V</b> view · <b>M</b> map · <b>Tab</b> scores<br><b>Space</b> drift in car / ascend in heli · <b>Shift</b> run · sprint, heli down · <b>Enter</b> chat · <b>`</b> cheats</div>
+    <div class="keys"><b>WASD</b> move/drive · <b>LMB</b> shoot · <b>RMB</b> scope / lock-on · <b>1–7</b> weapons (5=sniper, 6=RPG, 7=lock-on)<br><b>F</b> enter/exit any vehicle (car · bike · heli · tank) · <b>V</b> view · <b>M</b> map · <b>Tab</b> scores<br><b>Space</b> drift in car / ascend in heli · <b>Shift</b> run, heli down · <b>Enter</b> chat · <b>O</b> settings · <b>`</b> cheats</div>
   </div>
   <div class="preview-cap">your character ↻</div>
 </div>
@@ -35,6 +38,9 @@
 <div id="hud">
   <div id="crosshair"></div>
   <div id="hitmark"></div>
+  <div id="scope"><div class="scope-h"></div><div class="scope-v"></div></div>
+  <div id="lockon"></div>
+  <div id="gear" title="Settings (O)">⚙</div>
   <div id="topbar"><div id="hpwrap"><div id="hp"></div></div><div id="kills">Kills: 0</div>
     <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div></div>
   <div id="weaponbox"><div id="wicon">🔫</div><div class="wt"><div id="wname">Pistol</div><div id="wammo">∞</div></div></div>
@@ -48,6 +54,20 @@
   <div id="click2play">click to look around</div>
   <canvas id="map"></canvas>
   <div id="maphint">M / Esc — close map</div>
+</div>
+
+<div id="settings">
+  <div class="scard">
+    <div class="stitle">SETTINGS</div>
+    <label>FIELD OF VIEW · <span id="fovVal">75</span></label>
+    <input id="fovSlider" type="range" min="60" max="105" step="1" />
+    <label>MOUSE SENSITIVITY · <span id="sensVal">1.0</span></label>
+    <input id="sensSlider" type="range" min="0.3" max="3" step="0.05" />
+    <label>VOLUME · <span id="volVal">80%</span></label>
+    <input id="volSlider" type="range" min="0" max="1" step="0.05" />
+    <label class="chk"><input id="invertY" type="checkbox" /> <span>Invert mouse Y</span></label>
+    <button id="settingsClose">CLOSE</button>
+  </div>
 </div>
 
 <script type="module" src="/js/main.js"></script>
