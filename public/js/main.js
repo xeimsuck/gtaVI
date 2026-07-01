@@ -510,6 +510,17 @@ function updatePlayer(dt) {
   updateLockOn(dt);
 }
 
+// pull the third-person camera in until no building wall sits between it and the player (fixes camera clipping/breaking indoors)
+function camDistClamp(pivot, back, maxDist, camY) {
+  for (let t = 1.0; t <= maxDist; t += 0.5) {
+    const x = pivot.x - back.x * t, z = pivot.z - back.z * t;
+    for (const b of buildings) {
+      const base = b.base || 0, top = base + (b.h || 60);
+      if (camY > base - 0.3 && camY < top + 0.6 && Math.abs(x - b.x) < b.w / 2 + 0.35 && Math.abs(z - b.z) < b.d / 2 + 0.35) return Math.max(1.3, t - 0.6);
+    }
+  }
+  return maxDist;
+}
 function updateCamera(dt) {
   const targetFov = scoped ? 24 : settings.fov;   // smooth zoom for the sniper scope
   if (Math.abs(camera.fov - targetFov) > 0.03) { camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 10); camera.updateProjectionMatrix(); }
@@ -537,9 +548,10 @@ function updateCamera(dt) {
   if (me.inCar && !tank) { let d = me.inCar.heading - camYaw; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; camYaw += d * Math.min(1, dt * 2); }
   // position: behind (horizontal) and above; keep out of buildings
   const back = new THREE.Vector3(Math.sin(camYaw), 0, Math.cos(camYaw));
-  const desired = camPivot.clone().addScaledVector(back, -dist); desired.y = camPivot.y + baseH;
-  if (desired.y < buildingTopAt(desired.x, desired.z) + 2) { const [rx, rz] = resolve(desired.x, desired.z, 1.0); desired.x = rx; desired.z = rz; }
-  camera.position.lerp(desired, me.inCar ? 0.18 : 0.4);
+  const aerial = heli || tank;
+  const cd = aerial ? dist : camDistClamp(camPivot, back, dist, camPivot.y + baseH);   // never let a wall come between camera and player (fixes indoor camera)
+  const desired = camPivot.clone().addScaledVector(back, -cd); desired.y = camPivot.y + baseH;
+  camera.position.lerp(desired, me.inCar ? 0.22 : 0.5);
   if (shake > 0) { camera.position.x += (Math.random() - 0.5) * shake; camera.position.y += (Math.random() - 0.5) * shake; shake = Math.max(0, shake - dt * 2); }
   // look: aim direction (mouse pitch) with a slight downward bias so the player stays in frame
   const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
@@ -1337,15 +1349,122 @@ function renderPreview(dt) {                            // rotating live charact
   renderer.render(scene, previewCam);
   renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
 }
+// ============================ ACTIVITIES ============================
+const pickupColor = t => t === 'health' ? 0x2ecc71 : t === 'smg' ? 0xf39c12 : t === 'shotgun' ? 0xe74c3c : t === 'rpg' ? 0x9b59b6 : t === 'sniper' ? 0x1abc9c : t === 'homing' ? 0xff7043 : t === 'rifle' ? 0x3498db : 0x3498db;
+function addLoot(type, x, z) { const gy = city.groundH(x, z); const mesh = makePickupMesh(type, pickupColor(type)); mesh.position.set(x, gy + 1, z); scene.add(mesh); pickups.push({ x, z, gy, type, mesh, taken: false, respawnAt: 0 }); }
+
+// ---- fill the empty landmark interiors with something worth going in for ----
+function stockInteriors() {
+  for (const lm of city.landmarks) {
+    const x = lm.x, z = lm.z;
+    if (lm.type === 'police') { addLoot('rifle', x - 4, z - 6); addLoot('shotgun', x, z - 7); addLoot('sniper', x + 4, z - 6); addLoot('rpg', x, z - 3); addLoot('health', x - 5, z); }   // ARMORY
+    else if (lm.type === 'hospital') { addLoot('health', x - 4, z - 5); addLoot('health', x + 4, z - 5); addLoot('health', x, z - 6); }                                                    // CLINIC
+    else if (lm.type === 'shop') { addLoot('smg', x - 4, z - 5); addLoot('shotgun', x + 4, z - 5); addLoot('health', x, z - 6); }                                                          // STORE
+    else if (lm.type === 'school') { for (const dx of [-6, 0, 6]) makeJumpPad(x + dx, z + 10); }                                                                                          // PLAYGROUND
+  }
+}
+
+// ---- jump pads: step on one to get launched into the air (deploy the parachute at the top!) ----
+const jumpPads = [];
+function makeJumpPad(x, z) {
+  const gy = city.groundH(x, z), g = new THREE.Group();
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 2.1, 0.3, 18), new THREE.MeshStandardMaterial({ color: 0x14e0c4, emissive: 0x0affd8, emissiveIntensity: 0.7, flatShading: true }));
+  pad.position.y = 0.15; g.add(pad);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(2.0, 0.13, 8, 22), new THREE.MeshStandardMaterial({ color: 0x0affd8, emissive: 0x0affd8, emissiveIntensity: 1 }));
+  ring.rotation.x = Math.PI / 2; ring.position.y = 0.34; g.add(ring);
+  g.position.set(x, gy, z); scene.add(g);
+  jumpPads.push({ x, z, mesh: g, ring, cd: 0 });
+}
+function updateJumpPads(dt) {
+  for (const jp of jumpPads) { jp.ring.rotation.z += dt * 2.2; if (jp.cd > 0) jp.cd -= dt; }
+  if (me.inCar || !me.alive || me.swimming) return;
+  for (const jp of jumpPads) {
+    if (jp.cd <= 0 && me.onGround && Math.abs(me.pos.x - jp.x) < 2.3 && Math.abs(me.pos.z - jp.z) < 2.3) { me.vy = 23; me.onGround = false; jp.cd = 0.5; shake = Math.max(shake, 0.4); }
+  }
+}
+
+// ---- timed checkpoint race circuit (run it with friends: everyone sees the gates & each other) ----
+const RACE = { pts: [], active: false, next: 0, t0: 0, best: null, lastTrig: 0 };
+function makeCheckpoint(x, z) {
+  const gy = city.groundH(x, z), g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(5, 0.42, 8, 30), new THREE.MeshStandardMaterial({ color: 0xffc400, emissive: 0xffc400, emissiveIntensity: 0.9 }));
+  ring.rotation.x = Math.PI / 2; ring.position.y = 0.6; g.add(ring);
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 26, 22, 1, true), new THREE.MeshBasicMaterial({ color: 0xffd23c, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false }));
+  pillar.position.y = 13; g.add(pillar);
+  g.position.set(x, gy, z); scene.add(g);
+  return { x, z, mesh: g, ring, pillar };
+}
+function buildRace() {
+  const A = city.islands.A, N = 7, rad = A.r * 0.6;
+  for (let i = 0; i < N; i++) {
+    const ang = (i / N) * Math.PI * 2 - 1.2;
+    let x = Math.round((A.cx + Math.cos(ang) * rad) / WORLD.BLOCK) * WORLD.BLOCK;
+    let z = Math.round((A.cz + Math.sin(ang) * rad) / WORLD.BLOCK) * WORLD.BLOCK;
+    for (let k = 0; k < 6 && !city.isLandCell(x, z); k++) { x += WORLD.BLOCK * (Math.cos(ang) > 0 ? -1 : 1); z += WORLD.BLOCK * (Math.sin(ang) > 0 ? -1 : 1); }
+    if (city.isLandCell(x, z)) RACE.pts.push(makeCheckpoint(x, z));
+  }
+}
+function finishRace() {
+  const t = (performance.now() - RACE.t0) / 1000; RACE.active = false; RACE.next = 0;
+  const rec = RACE.best == null || t < RACE.best; if (rec) RACE.best = t;
+  notice('🏁 Финиш! ' + t.toFixed(1) + 'с' + (rec ? ' — рекорд!' : ''));
+  try { net.send({ t: 'chat', m: '🏁 прошёл(ла) гонку за ' + t.toFixed(1) + 'с' + (RACE.best != null ? ' (лучшее ' + RACE.best.toFixed(1) + 'с)' : '') }); } catch {}
+}
+function updateRace(dt) {
+  if (!RACE.pts.length) return;
+  const tgtIdx = RACE.active ? RACE.next : 0;
+  for (let i = 0; i < RACE.pts.length; i++) {
+    const cp = RACE.pts[i], on = i === tgtIdx;
+    cp.ring.rotation.z += dt * (on ? 1.7 : 0.3);
+    cp.pillar.visible = on || (!RACE.active && i === 0);
+    cp.ring.material.emissiveIntensity = on ? 1.1 : 0.32;
+    cp.ring.material.color.setHex(on ? (RACE.active ? 0x35e05a : 0xffc400) : 0x7a611c);
+  }
+  if (me.alive) {
+    const tgt = RACE.pts[tgtIdx], now = performance.now();
+    if (Math.hypot(me.pos.x - tgt.x, me.pos.z - tgt.z) < 6.5 && now - RACE.lastTrig > 300) {
+      RACE.lastTrig = now;
+      if (!RACE.active) { RACE.active = true; RACE.t0 = now; RACE.next = 1 % RACE.pts.length; notice('🏁 Поехали!'); }
+      else if (RACE.next === 0) finishRace();
+      else { RACE.next = (RACE.next + 1) % RACE.pts.length; notice(RACE.next === 0 ? 'Последний круг → к старту!' : ('Чекпоинт ' + RACE.next + '/' + (RACE.pts.length - 1))); }
+    }
+  }
+  updateRaceHud();
+}
+const raceHud = document.createElement('div'); raceHud.id = 'racehud';
+raceHud.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);padding:6px 14px;border-radius:10px;background:rgba(12,16,24,.72);color:#ffe08a;font:600 15px/1.2 system-ui,sans-serif;letter-spacing:.3px;display:none;z-index:20;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.4)';
+document.getElementById('hud').appendChild(raceHud);
+function updateRaceHud() {
+  if (RACE.active) {
+    const t = ((performance.now() - RACE.t0) / 1000).toFixed(1);
+    const cpNum = RACE.next === 0 ? RACE.pts.length - 1 : RACE.next;
+    raceHud.style.display = 'block';
+    raceHud.innerHTML = '🏁 <b>' + t + 'с</b> · чекпоинт ' + cpNum + '/' + (RACE.pts.length - 1) + (RACE.best != null ? ' · рекорд ' + RACE.best.toFixed(1) + 'с' : '');
+  } else {
+    const s = RACE.pts[0], near = s && me.alive && Math.hypot(me.pos.x - s.x, me.pos.z - s.z) < 24;
+    raceHud.style.display = near ? 'block' : 'none';
+    if (near) raceHud.innerHTML = '🏁 <b>ГОНКА</b> — заедь в золотое кольцо, чтобы стартовать' + (RACE.best != null ? ' · рекорд ' + RACE.best.toFixed(1) + 'с' : '');
+  }
+}
+function initActivities() {
+  stockInteriors();
+  buildRace();
+  const A = city.islands.A;
+  for (const p of [[A.cx - 60, A.cz], [A.cx + 60, A.cz - 20], [A.cx, A.cz + 70], [A.cx - 30, A.cz - 60], [A.cx + 40, A.cz + 40]]) {
+    if (city.isLandCell(p[0], p[1]) && !insideBuilding(p[0], p[1])) makeJumpPad(p[0], p[1]);
+  }
+}
+
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, clock.getDelta());
   if (waterUniforms) waterUniforms.uTime.value += dt;
-  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updateFootCops(dt); updateStationCops(dt); updateSchoolKids(dt); updatePickups(dt); updateBarrels(); updateWanted(dt); updateRemotes(dt); updateRockets(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); else drawMinimap(); }
+  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updateFootCops(dt); updateStationCops(dt); updateSchoolKids(dt); updatePickups(dt); updateJumpPads(dt); updateRace(dt); updateBarrels(); updateWanted(dt); updateRemotes(dt); updateRockets(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); else drawMinimap(); }
   else { menuA += dt * 0.1; camera.position.set(WORLD.SIZE / 2 + Math.cos(menuA) * 90, 70, WORLD.SIZE / 2 + Math.sin(menuA) * 90); camera.lookAt(WORLD.SIZE / 2, 8, WORLD.SIZE / 2); updateFx(dt); }
   renderer.render(scene, camera);
   if (!playing) renderPreview(dt);
 }
 spawnPickups();
+initActivities();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, EMOTES, openEmoteWheel, closeEmoteWheel, emoteSelectTick, getEmote: () => ({ open: emoteOpen, sel: emoteSel, emote: me.emote }), resolveFoot, supportHeight, deployChute, closeChute, updateParachute, waterAnimated: () => !!waterUniforms, render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, EMOTES, openEmoteWheel, closeEmoteWheel, emoteSelectTick, getEmote: () => ({ open: emoteOpen, sel: emoteSel, emote: me.emote }), resolveFoot, supportHeight, deployChute, closeChute, updateParachute, waterAnimated: () => !!waterUniforms, RACE, jumpPads, updateRace, updateJumpPads, buildRace, stockInteriors, initActivities, camDistClamp, insideBuilding, render: () => renderer.render(scene, camera) };
