@@ -27,9 +27,9 @@ function makeSign(text, w, bg, fg) {
   return m;
 }
 // an enterable building: 4 walls with a door gap in the front (+z), flat roof, interior floor
-function makeShell(g, buildings, cx, cz, w, d, h, col) {
+function makeShell(g, buildings, cx, cz, w, d, h, col, base = 0) {
   const BOX = new THREE.BoxGeometry(1, 1, 1), mat = STD(col, { roughness: 0.85 }), t = 0.7, doorW = 5;
-  const wall = (x, z, sw, sh, sd) => { const b = new THREE.Mesh(BOX, mat); b.position.set(x, sh / 2, z); b.scale.set(sw, sh, sd); b.castShadow = true; b.receiveShadow = true; g.add(b); buildings.push({ x, z, w: sw, d: sd, h: sh }); };
+  const wall = (x, z, sw, sh, sd) => { const b = new THREE.Mesh(BOX, mat); b.position.set(x, sh / 2, z); b.scale.set(sw, sh, sd); b.castShadow = true; b.receiveShadow = true; g.add(b); buildings.push({ x, z, w: sw, d: sd, h: sh, base }); };
   wall(cx, cz - d / 2, w, h, t);                     // back
   wall(cx - w / 2, cz, t, h, d);                     // left
   wall(cx + w / 2, cz, t, h, d);                     // right
@@ -72,8 +72,15 @@ export function makeCity(scene, seed = 7) {
 
   const isLand = (x, z) => inA(x, z) || inD(x, z);
 
+  // ----- terrain heightfield: 0 at the coasts, rolling hills inland (so the city isn't flat) -----
+  const groundH = (x, z) => {
+    const inland = Math.max(0, 1 - Math.hypot(x - A.cx, z - A.cz) / A.r, 1 - Math.hypot(x - D.cx, z - D.cz) / D.r);
+    const hills = 3.2 * Math.sin(x * 0.016) * Math.cos(z * 0.015) + 2.4 * Math.cos((x + z) * 0.011 + 1.0);
+    return Math.max(0, inland * 6.5 + hills * inland);   // gentle rolling elevation (0 at coast → ~9 inland)
+  };
+
   const ocean = new THREE.Mesh(new THREE.PlaneGeometry(S * 6, S * 6), STD(0x2d7da6, { roughness: 0.25, metalness: 0.4 }));
-  ocean.rotation.x = -Math.PI / 2; ocean.position.set(S / 2, -0.6, S / 2); g.add(ocean);
+  ocean.rotation.x = -Math.PI / 2; ocean.position.set(S / 2, -0.9, S / 2); g.add(ocean);
 
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const asphaltMat = STD(0x40434a, { roughness: 1 }), sandMat = STD(0xddc89a, { roughness: 1 });
@@ -98,57 +105,61 @@ export function makeCity(scene, seed = 7) {
 
   for (const c of landCells) {
     const { gx, gz, cx, cz } = c;
+    let gy = groundH(cx, cz);
+    if (bridgeCorridor(cx, cz)) gy = Math.min(gy, 1.2);  // keep the on-ramp low so it meets the flat bridge
+    c.gy = gy;
+    const cg = new THREE.Group(); cg.position.y = gy; g.add(cg);   // whole cell rides at its terrain height
     const coastal = !isL(gx - 1, gz) || !isL(gx + 1, gz) || !isL(gx, gz - 1) || !isL(gx, gz + 1);
-    if (coastal) { const sand = new THREE.Mesh(sandGeo, sandMat); sand.rotation.x = -Math.PI / 2; sand.position.set(cx, -0.05, cz); sand.receiveShadow = true; g.add(sand); }
-    const asph = new THREE.Mesh(asphGeo, asphaltMat); asph.rotation.x = -Math.PI / 2; asph.position.set(cx, 0.005, cz); asph.receiveShadow = true; g.add(asph);
+    if (coastal) { const sand = new THREE.Mesh(sandGeo, sandMat); sand.rotation.x = -Math.PI / 2; sand.position.set(cx, -0.05, cz); sand.receiveShadow = true; cg.add(sand); }
+    const asph = new THREE.Mesh(asphGeo, asphaltMat); asph.rotation.x = -Math.PI / 2; asph.position.set(cx, 0.005, cz); asph.receiveShadow = true; cg.add(asph);
 
     if (bridgeCorridor(cx, cz)) {                       // keep the bridge on-ramp clear — road only, no buildings
-      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);
+      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; cg.add(lot);
       continue;
     }
     const lm = lmCell[gx + ',' + gz];
     if (lm) {
-      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);
+      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; cg.add(lot);
       const w = B - RO - 2, d = B - RO - 4, h = (lm.type === 'police' || lm.type === 'hospital') ? 12 : 8.5;
-      makeShell(g, buildings, cx, cz, w, d, h, lm.col);
-      const s1 = makeSign(lm.label, w * 0.8, lm.sbg, '#fff'); s1.position.set(cx, h * 0.62, cz + d / 2 + 0.06); g.add(s1);
-      const s2 = makeSign(lm.label, w * 0.9, lm.sbg, '#fff'); s2.position.set(cx, h + 1.1, cz + d / 2 - 0.2); g.add(s2);
+      makeShell(cg, buildings, cx, cz, w, d, h, lm.col, gy);
+      const s1 = makeSign(lm.label, w * 0.8, lm.sbg, '#fff'); s1.position.set(cx, h * 0.62, cz + d / 2 + 0.06); cg.add(s1);
+      const s2 = makeSign(lm.label, w * 0.9, lm.sbg, '#fff'); s2.position.set(cx, h + 1.1, cz + d / 2 - 0.2); cg.add(s2);
       const ec = lm.type === 'hospital' ? 0xc0392b : lm.type === 'police' ? 0x2244ff : lm.type === 'school' ? 0xf1c40f : 0xe67e22;
-      const em = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: ec, emissive: ec, emissiveIntensity: 0.55, flatShading: true })); em.position.set(cx + w * 0.32, 2.5, cz + d / 2 + 0.2); em.scale.set(1.3, 1.3, 0.2); g.add(em);
-      if (lm.type === 'hospital') { interiorProp(g, cx - w / 4, cz - d / 5, 1.2, 0.6, 2.4, 0xffffff); interiorProp(g, cx + w / 4, cz - d / 5, 1.2, 0.6, 2.4, 0xffffff); }
-      else if (lm.type === 'police') { interiorProp(g, cx, cz - d / 4, w * 0.5, 0.9, 1.0, 0x394a5a); for (let k = -1; k <= 1; k += 2) interiorProp(g, cx + k * w / 4, cz - d / 3, 0.2, h - 1.5, 2.5, 0x555555); }
-      else if (lm.type === 'school') { for (let k = -1; k <= 1; k++) interiorProp(g, cx + k * 3, cz - d / 5, 1.6, 0.7, 1.0, 0x8a6b2a); }
-      else { for (let k = -1; k <= 1; k += 2) interiorProp(g, cx + k * w / 4, cz, 1.0, h - 2, d * 0.6, 0xbfae8a); }
-      landmarks.push({ type: lm.type, label: lm.label, x: cx, z: cz, door: { x: cx, z: cz + d / 2 + 3 } });
+      const em = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: ec, emissive: ec, emissiveIntensity: 0.55, flatShading: true })); em.position.set(cx + w * 0.32, 2.5, cz + d / 2 + 0.2); em.scale.set(1.3, 1.3, 0.2); cg.add(em);
+      if (lm.type === 'hospital') { interiorProp(cg, cx - w / 4, cz - d / 5, 1.2, 0.6, 2.4, 0xffffff); interiorProp(cg, cx + w / 4, cz - d / 5, 1.2, 0.6, 2.4, 0xffffff); }
+      else if (lm.type === 'police') { interiorProp(cg, cx, cz - d / 4, w * 0.5, 0.9, 1.0, 0x394a5a); for (let k = -1; k <= 1; k += 2) interiorProp(cg, cx + k * w / 4, cz - d / 3, 0.2, h - 1.5, 2.5, 0x555555); }
+      else if (lm.type === 'school') { for (let k = -1; k <= 1; k++) interiorProp(cg, cx + k * 3, cz - d / 5, 1.6, 0.7, 1.0, 0x8a6b2a); }
+      else { for (let k = -1; k <= 1; k += 2) interiorProp(cg, cx + k * w / 4, cz, 1.0, h - 2, d * 0.6, 0xbfae8a); }
+      landmarks.push({ type: lm.type, label: lm.label, x: cx, z: cz, gy, door: { x: cx, z: cz + d / 2 + 3 } });
       spawns.push({ x: cx, z: cz + d / 2 + 5 });
       continue;
     }
 
     const onIslB = inD(cx, cz), ic = onIslB ? D : A;
     const roll = r(), park = roll < 0.13, shop = !park && roll < 0.28;
-    const lot = new THREE.Mesh(lotGeo, park ? parkMat : sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);
+    const lot = new THREE.Mesh(lotGeo, park ? parkMat : sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; cg.add(lot);
 
     if (park) {
-      if (r() < 0.55) g.add(makeHill(cx + (r() - 0.5) * 10, cz + (r() - 0.5) * 10, 8 + r() * 7, 3 + r() * 3));   // grassy hill
-      for (let i = 0; i < 4; i++) g.add(makeTree(cx + (r() - 0.5) * (B - RO) * 0.7, cz + (r() - 0.5) * (B - RO) * 0.7, r));
+      if (r() < 0.55) cg.add(makeHill(cx + (r() - 0.5) * 10, cz + (r() - 0.5) * 10, 8 + r() * 7, 3 + r() * 3));   // grassy hill
+      for (let i = 0; i < 4; i++) cg.add(makeTree(cx + (r() - 0.5) * (B - RO) * 0.7, cz + (r() - 0.5) * (B - RO) * 0.7, r));
       spawns.push({ x: cx, z: cz });
     } else if (shop) {
       const w = (B - RO) * 0.86, d = (B - RO) * 0.86, h = 6 + r() * 3, col = FACADES[(r() * FACADES.length) | 0], awnCol = SHOPCOL[(r() * SHOPCOL.length) | 0];
-      const m = new THREE.Mesh(boxGeo, STD(col)); m.position.set(cx, h / 2, cz); m.scale.set(w, h, d); m.castShadow = true; m.receiveShadow = true; g.add(m);
-      const awn = new THREE.Mesh(boxGeo, STD(awnCol, { roughness: 0.6 })); awn.position.set(cx, 2.5, cz + d / 2 + 0.4); awn.scale.set(w * 0.86, 0.4, 1.2); awn.castShadow = true; g.add(awn);
-      const sign = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: awnCol, emissive: awnCol, emissiveIntensity: 0.85, flatShading: true })); sign.position.set(cx, h + 0.7, cz + d / 2 - 0.1); sign.scale.set(w * 0.72, 1.2, 0.3); g.add(sign);
-      buildings.push({ x: cx, z: cz, w, d, h }); shops.push({ x: cx, z: cz, color: awnCol });
+      const m = new THREE.Mesh(boxGeo, STD(col)); m.position.set(cx, h / 2, cz); m.scale.set(w, h, d); m.castShadow = true; m.receiveShadow = true; cg.add(m);
+      const awn = new THREE.Mesh(boxGeo, STD(awnCol, { roughness: 0.6 })); awn.position.set(cx, 2.5, cz + d / 2 + 0.4); awn.scale.set(w * 0.86, 0.4, 1.2); awn.castShadow = true; cg.add(awn);
+      const sign = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: awnCol, emissive: awnCol, emissiveIntensity: 0.85, flatShading: true })); sign.position.set(cx, h + 0.7, cz + d / 2 - 0.1); sign.scale.set(w * 0.72, 1.2, 0.3); cg.add(sign);
+      buildings.push({ x: cx, z: cz, w, d, h, base: gy }); shops.push({ x: cx, z: cz, color: awnCol });
       spawns.push({ x: cx, z: cz + d / 2 + 4 });
     } else {
       const downtown = 1 - Math.hypot(cx - ic.cx, cz - ic.cz) / (ic.r * 1.05), inner = (B - RO) * 0.84;
       const rot = onIslB ? (r() - 0.5) * 0.9 : 0;        // island B rotated → breaks the grid look
       const place = (ox, oz, w, d) => {
         let h = 7 + Math.pow(r(), 1.7) * (12 + Math.max(0, downtown) * (onIslB ? 80 : 55));
-        const m = new THREE.Mesh(boxGeo, STD(FACADES[(r() * FACADES.length) | 0])); m.position.set(cx + ox, h / 2, cz + oz); m.scale.set(w, h, d); m.rotation.y = rot; m.castShadow = true; m.receiveShadow = true; g.add(m);
-        const roof = new THREE.Mesh(boxGeo, STD(0x3c3f47)); roof.position.set(cx + ox, h + 0.4, cz + oz); roof.scale.set(w * 0.96, 0.8, d * 0.96); roof.rotation.y = rot; roof.castShadow = true; g.add(roof);
-        if (h > 14) { const band = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x223, emissive: 0x335, emissiveIntensity: 0.5, flatShading: true })); band.position.set(cx + ox, h * 0.6, cz + oz); band.scale.set(w * 0.82, h * 0.5, d * 0.82); band.rotation.y = rot; g.add(band); }
+        const m = new THREE.Mesh(boxGeo, STD(FACADES[(r() * FACADES.length) | 0])); m.position.set(cx + ox, h / 2, cz + oz); m.scale.set(w, h, d); m.rotation.y = rot; m.castShadow = true; m.receiveShadow = true; cg.add(m);
+        const roof = new THREE.Mesh(boxGeo, STD(0x3c3f47)); roof.position.set(cx + ox, h + 0.4, cz + oz); roof.scale.set(w * 0.96, 0.8, d * 0.96); roof.rotation.y = rot; roof.castShadow = true; cg.add(roof);
+        if (h > 14) { const band = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x223, emissive: 0x335, emissiveIntensity: 0.5, flatShading: true })); band.position.set(cx + ox, h * 0.6, cz + oz); band.scale.set(w * 0.82, h * 0.5, d * 0.82); band.rotation.y = rot; cg.add(band); }
         const cc = Math.abs(Math.cos(rot)), ss = Math.abs(Math.sin(rot));
-        buildings.push({ x: cx + ox, z: cz + oz, w: w * cc + d * ss, d: w * ss + d * cc, h: h + 1 });
+        buildings.push({ x: cx + ox, z: cz + oz, w: w * cc + d * ss, d: w * ss + d * cc, h: h + 1, base: gy });
       };
       const style = r();
       if (style < 0.5) place(0, 0, inner * (0.7 + r() * 0.25), inner * (0.7 + r() * 0.25));
@@ -156,18 +167,18 @@ export function makeCity(scene, seed = 7) {
       else { const w = inner * 0.42, d = inner * 0.42; for (const sx of [-1, 1]) for (const sz of [-1, 1]) place(sx * inner * 0.24, sz * inner * 0.24, w, d); }
     }
     if (!park) {
-      if (r() < 0.4) g.add(makeLamp(cx + (B - RO) / 2 + 2.2, cz - 7));
-      if (r() < 0.22) g.add(makeHydrant(cx - (B - RO) / 2 - 1.6, cz + 6));
+      if (r() < 0.4) cg.add(makeLamp(cx + (B - RO) / 2 + 2.2, cz - 7));
+      if (r() < 0.22) cg.add(makeHydrant(cx - (B - RO) / 2 - 1.6, cz + 6));
     }
-    if (coastal) { for (let i = 0; i < 2; i++) g.add(makeTree(cx + (r() - 0.5) * B * 0.8, cz + (r() - 0.5) * B * 0.8, r)); if (r() < 0.55) g.add(makeRock(cx + (r() - 0.5) * B, cz + (r() - 0.5) * B, 0.9 + r() * 1.6, r)); }
+    if (coastal) { for (let i = 0; i < 2; i++) cg.add(makeTree(cx + (r() - 0.5) * B * 0.8, cz + (r() - 0.5) * B * 0.8, r)); if (r() < 0.55) cg.add(makeRock(cx + (r() - 0.5) * B, cz + (r() - 0.5) * B, 0.9 + r() * 1.6, r)); }
   }
   // mountains rising from the sea, off the outer coasts — scenery so the world isn't flat
   for (const M of [{ x: 70, z: 180 }, { x: 140, z: 560 }, { x: 1000, z: 250 }, { x: 990, z: 820 }, { x: 640, z: 970 }, { x: 470, z: 60 }]) {
     if (!isLand(M.x, M.z)) g.add(makeMountain(M.x, M.z, 40 + r() * 30, 60 + r() * 50));
   }
 
-  for (let gx = 1; gx < G; gx++) for (let gz = 0; gz < G; gz++) if (land[gx - 1][gz] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const a = new THREE.Mesh(boxGeo, lineMat); a.position.set(gx * B, 0.04, gz * B + B / 2 + t + 2); a.scale.set(0.4, 0.02, 3); g.add(a); }
-  for (let gz = 1; gz < G; gz++) for (let gx = 0; gx < G; gx++) if (land[gx][gz - 1] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const b = new THREE.Mesh(boxGeo, lineMat); b.position.set(gx * B + B / 2 + t + 2, 0.04, gz * B); b.scale.set(3, 0.02, 0.4); g.add(b); }
+  for (let gx = 1; gx < G; gx++) for (let gz = 0; gz < G; gz++) if (land[gx - 1][gz] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const zz = gz * B + B / 2 + t + 2, a = new THREE.Mesh(boxGeo, lineMat); a.position.set(gx * B, groundH(gx * B, zz) + 0.05, zz); a.scale.set(0.4, 0.02, 3); g.add(a); }
+  for (let gz = 1; gz < G; gz++) for (let gx = 0; gx < G; gx++) if (land[gx][gz - 1] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const xx = gx * B + B / 2 + t + 2, b = new THREE.Mesh(boxGeo, lineMat); b.position.set(xx, groundH(xx, gz * B) + 0.05, gz * B); b.scale.set(3, 0.02, 0.4); g.add(b); }
 
   // ----- bridge deck, railings, towers, cables -----
   (function bridge() {
@@ -196,7 +207,9 @@ export function makeCity(scene, seed = 7) {
   const isLandCell = (x, z) => { const gx = Math.floor(x / B), gz = Math.floor(z / B); if (gx >= 0 && gz >= 0 && gx < G && gz < G && land[gx][gz]) return true; return onBridge(x, z); };
   if (!spawns.length) spawns.push({ x: A.cx, z: A.cz });
   scene.add(g);
-  return { group: g, buildings, spawns, shops, landmarks, isLand, isLandCell, land, landCells, islands: { A, D }, bridge: { ax: pAx, az: pAz, bx: pDx, bz: pDz } };
+  // ground height for gameplay: terrain on land, but flat (0) on the bridge deck so vehicles sit on it
+  const groundAt = (x, z) => (onBridge(x, z) && !isLand(x, z)) ? 0 : groundH(x, z);
+  return { group: g, buildings, spawns, shops, landmarks, isLand, isLandCell, groundH: groundAt, land, landCells, islands: { A, D }, bridge: { ax: pAx, az: pAz, bx: pDx, bz: pDz } };
 }
 
 function makeLamp(x, z) {

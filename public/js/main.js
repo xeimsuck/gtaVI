@@ -38,22 +38,22 @@ const buildings = city.buildings;
 // ---------- animated water (GPU wave shader) ----------
 let waterUniforms = null;
 (function makeWater() {
-  const geo = new THREE.PlaneGeometry(2800, 2800, 220, 220); geo.rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x2b74a3, roughness: 0.14, metalness: 0.55, transparent: true, opacity: 0.9 });
+  const geo = new THREE.PlaneGeometry(1800, 1800, 90, 90); geo.rotateX(-Math.PI / 2);   // far fewer verts → no lag
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2b74a3, roughness: 0.16, metalness: 0.55, transparent: true, opacity: 0.9 });
   mat.onBeforeCompile = sh => {
     sh.uniforms.uTime = { value: 0 }; waterUniforms = sh.uniforms;
     sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader
       .replace('#include <beginnormal_vertex>', `
-        float dydx = cos(position.x*0.05 + uTime*1.3)*0.0175 + cos((position.x+position.z)*0.028 + uTime*0.8)*0.007;
-        float dydz = cos(position.z*0.045 + uTime*1.1)*0.01575 + cos((position.x+position.z)*0.028 + uTime*0.8)*0.007;
-        vec3 objectNormal = normalize(vec3(-dydx, 1.0, -dydz));
+        float dydx = cos(position.x*0.06 + uTime*1.4)*0.0048 + cos((position.x+position.z)*0.03 + uTime*0.9)*0.0021;
+        float dydz = cos(position.z*0.055 + uTime*1.15)*0.0044 + cos((position.x+position.z)*0.03 + uTime*0.9)*0.0021;
+        vec3 objectNormal = normalize(vec3(-dydx*6.0, 1.0, -dydz*6.0));
       `)
       .replace('#include <begin_vertex>', `
         vec3 transformed = vec3(position);
-        transformed.y += sin(position.x*0.05 + uTime*1.3)*0.35 + sin(position.z*0.045 + uTime*1.1)*0.35 + sin((position.x+position.z)*0.028 + uTime*0.8)*0.25;
+        transformed.y += sin(position.x*0.06 + uTime*1.4)*0.08 + sin(position.z*0.055 + uTime*1.15)*0.08 + sin((position.x+position.z)*0.03 + uTime*0.9)*0.07;
       `);
   };
-  const m = new THREE.Mesh(geo, mat); m.position.set(WORLD.SIZE / 2, -0.32, WORLD.SIZE / 2); m.renderOrder = 1; scene.add(m);
+  const m = new THREE.Mesh(geo, mat); m.position.set(WORLD.SIZE / 2, -0.35, WORLD.SIZE / 2); m.renderOrder = 1; scene.add(m);
 })();
 
 function resolve(x, z, r) {
@@ -71,24 +71,36 @@ function onLandOrBeach(x, z) { return city.isLandCell(x, z) || city.isLandCell(x
 // on-foot building collision that respects roof height: blocks you at ground/wall level, but lets you WALK on rooftops
 function resolveFoot(x, z, y, r) {
   for (const b of buildings) {
-    if (y >= (b.h || 60) - 0.3) continue;              // at/above the roof — no wall push (walk on top)
+    if (y >= (b.base || 0) + (b.h || 60) - 0.3) continue;   // at/above the roof — no wall push (walk on top)
     const hw = b.w / 2 + r, hd = b.d / 2 + r, dx = x - b.x, dz = z - b.z;
     if (Math.abs(dx) < hw && Math.abs(dz) < hd) { const ox = hw - Math.abs(dx), oz = hd - Math.abs(dz); if (ox < oz) x += dx < 0 ? -ox : ox; else z += dz < 0 ? -oz : oz; }
   }
   return [x, z];
 }
-// the surface height under the player (a rooftop if they're descending onto one, else ground)
+// terrain height + slope tilt for a ground vehicle
+function terrainTilt(c) {
+  const s = 2.6, h = c.heading;
+  const ahead = city.groundH(c.x + Math.sin(h) * s, c.z + Math.cos(h) * s), behind = city.groundH(c.x - Math.sin(h) * s, c.z - Math.cos(h) * s);
+  const s1 = city.groundH(c.x + Math.cos(h) * s, c.z - Math.sin(h) * s), s2 = city.groundH(c.x - Math.cos(h) * s, c.z + Math.sin(h) * s);
+  return { y: city.groundH(c.x, c.z), pitch: Math.atan2(behind - ahead, s * 2), roll: Math.atan2(s1 - s2, s * 2) };
+}
+// the surface height under the player: the terrain, or a rooftop if they're descending onto one
 function supportHeight(x, z, y) {
-  let s = 0;
-  for (const b of buildings) { const roof = b.h || 60; if (y >= roof - 0.6 && Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2) s = Math.max(s, roof); }
+  let s = city.groundH(x, z);
+  for (const b of buildings) { const roof = (b.base || 0) + (b.h || 60); if (y >= roof - 0.6 && Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2) s = Math.max(s, roof); }
   return s;
 }
 // ---------- parachute ----------
 function deployChute() { if (me.chute) return; me.chute = makeParachute(); scene.add(me.chute); }
 function closeChute() { if (me.chute) { scene.remove(me.chute); me.chute = null; } }
 function updateParachute(dt) {
-  if (me.inCar || !me.alive) { closeChute(); return; }
-  if (!me.chute && !me.onGround && me.pos.y > 5 && me.vy < 0 && keys.has('Space')) { deployChute(); }
+  if (me.inCar || !me.alive) { closeChute(); me._chuteSp = false; return; }
+  const sp = keys.has('Space');
+  if (sp && !me._chuteSp) {                              // Space rising-edge: deploy or CUT AWAY in the air
+    if (me.chute) closeChute();
+    else if (!me.onGround && me.pos.y > 5 && me.vy < 0) deployChute();
+  }
+  me._chuteSp = sp;
   if (me.chute) { me.chute.position.set(me.pos.x, me.pos.y + 2.7, me.pos.z); me.chute.rotation.y = me.heading; }
 }
 // 3D box collision for aircraft: solid only up to each building's roof. Pushes UP onto the roof (so you can land)
@@ -96,7 +108,7 @@ function updateParachute(dt) {
 function resolveHeli(x, z, y, r) {
   let ny = y;
   for (const b of buildings) {
-    const roof = b.h || 60;
+    const roof = (b.base || 0) + (b.h || 60);
     if (ny >= roof) continue;                          // above the roof — free airspace
     const hw = b.w / 2 + r, hd = b.d / 2 + r, dx = x - b.x, dz = z - b.z;
     if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
@@ -121,7 +133,7 @@ const cars = [];
     c.x = sp.x + (r() - 0.5) * 8; c.z = sp.z + 16; if (!city.isLandCell(c.x, c.z)) { c.x = sp.x; c.z = sp.z; }
     c.heading = Math.round(r() * 4) * Math.PI / 2;
     c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = colHex; c.occupant = null; c.roll = 0; c.pitch = 0; c.type = 'car';
-    c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.heading;
+    c.group.position.set(c.x, city.groundH(c.x, c.z), c.z); c.group.rotation.y = c.heading;
     scene.add(c.group); cars.push(c);
   }
 })();
@@ -135,7 +147,7 @@ const cars = [];
     b.x = sp.x + (r() - 0.5) * 12; b.z = sp.z - 14; if (!city.isLandCell(b.x, b.z)) { b.x = sp.x; b.z = sp.z; }
     b.heading = Math.round(r() * 4) * Math.PI / 2;
     b.speed = 0; b.vx = 0; b.vz = 0; b.colHex = colHex; b.occupant = null; b.roll = 0; b.pitch = 0; b.type = 'bike';
-    b.group.position.set(b.x, 0, b.z); b.group.rotation.y = b.heading;
+    b.group.position.set(b.x, city.groundH(b.x, b.z), b.z); b.group.rotation.y = b.heading;
     scene.add(b.group); cars.push(b);
   }
 })();
@@ -145,7 +157,7 @@ const cars = [];
   for (const s of pts) {
     const h = makeHeli(0x2c3e57);
     h.x = s.x; h.z = s.z; h.y = 0; h.heading = 0; h.speed = 0; h.vx = 0; h.vz = 0; h.colHex = 0x2c3e57; h.occupant = null; h.roll = 0; h.pitch = 0; h.type = 'heli'; h.rotorSpin = 0;
-    h.group.position.set(h.x, 0, h.z); scene.add(h.group); cars.push(h);
+    h.group.position.set(h.x, city.groundH(h.x, h.z), h.z); scene.add(h.group); cars.push(h);
   }
 })();
 // ---------- tanks (on open land spawns) ----------
@@ -154,7 +166,7 @@ const cars = [];
   for (const s of pts) {
     const t = makeTank(0x5a6b3a);
     t.x = s.x; t.z = s.z; t.heading = 0; t.speed = 0; t.vx = 0; t.vz = 0; t.colHex = 0x5a6b3a; t.occupant = null; t.roll = 0; t.pitch = 0; t.type = 'tank'; t.turretYaw = 0; t.tShootCd = 0;
-    t.group.position.set(t.x, 0, t.z); scene.add(t.group); cars.push(t);
+    t.group.position.set(t.x, city.groundH(t.x, t.z), t.z); scene.add(t.group); cars.push(t);
   }
 })();
 // ---------- boats (on the water just off the beaches) ----------
@@ -222,7 +234,7 @@ const me = {
 const hx2i = v => (v ? parseInt(v.slice(1), 16) : undefined);
 function charFromLook(lk, fallback) { lk = lk || {}; return makeChar(hx2i(lk.shirt) ?? hx2i(fallback) ?? 0x3aa0ff, { skin: hx2i(lk.skin), hair: hx2i(lk.hair), pants: hx2i(lk.pants), hat: !!lk.hat, gender: lk.gender === 'f' ? 'f' : 'm', preset: (lk.preset === 'fox' || lk.preset === 'marina') ? lk.preset : undefined }); }
 function buildChar() { return charFromLook(me.look); }
-me.char = buildChar(); scene.add(me.char.group); me.char.setWeapon(me.weapon);
+me.char = buildChar(); scene.add(me.char.group); me.char.setWeapon(me.weapon); me.pos.y = city.groundH(me.pos.x, me.pos.z);
 function setWeapon(kind) { me.weapon = kind; me.shootCd = 0; if (me.char && me.char.setWeapon) me.char.setWeapon(kind); }
 addEventListener('wheel', e => {
   if (!playing || captured || me.inCar || !me.alive) return;
@@ -239,7 +251,7 @@ function saveSettings() { try { localStorage.setItem('viceSettings', JSON.string
 let scoped = false;
 camera.fov = settings.fov; camera.updateProjectionMatrix();
 
-function spawnMe(x, z) { me.pos.set(x, 0, z); me.alive = true; me.hp = 100; me.wanted = 0; me.heat = 0; me.lastCrime = 0; closeChute(); if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = true; camPivot = null; }
+function spawnMe(x, z) { me.pos.set(x, city.groundH(x, z), z); me.alive = true; me.hp = 100; me.wanted = 0; me.heat = 0; me.lastCrime = 0; closeChute(); if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = true; camPivot = null; }
 
 let fDown = false, vDown = false, mDown = false, mapOpen = false;
 function toggleCar() {
@@ -282,8 +294,9 @@ function driveCar(c, dt) {
   c.x = Math.max(2, Math.min(WORLD.SIZE - 2, nx)); c.z = Math.max(2, Math.min(WORLD.SIZE - 2, nz));
   c.roll = THREE.MathUtils.lerp(c.roll, steer * sf * (bike ? 0.5 : 0.12), 0.2);
   c.pitch = THREE.MathUtils.lerp(c.pitch, -thr * 0.05, 0.15);
-  c.group.position.set(c.x, 0, c.z);
-  c.group.rotation.set(c.pitch, c.heading, c.roll);
+  const tt = terrainTilt(c);
+  c.group.position.set(c.x, tt.y, c.z);
+  c.group.rotation.order = 'YXZ'; c.group.rotation.set(c.pitch + tt.pitch, c.heading, c.roll + tt.roll);
   for (const w of c.wheels) w.rotation.x += vF * dt * 2;
 }
 
@@ -330,7 +343,8 @@ function driveTank(c, dt) {
   if (!city.isLandCell(nx, nz)) { nx = c.x; nz = c.z; c.speed *= 0.3; }   // tank can't drive on water
   c.x = Math.max(2, Math.min(WORLD.SIZE - 2, nx)); c.z = Math.max(2, Math.min(WORLD.SIZE - 2, nz));
   c.pitch = THREE.MathUtils.lerp(c.pitch || 0, -thr * 0.03, 0.1);
-  c.group.position.set(c.x, 0, c.z); c.group.rotation.set(c.pitch, c.heading, 0);
+  const tt = terrainTilt(c);
+  c.group.position.set(c.x, tt.y, c.z); c.group.rotation.order = 'YXZ'; c.group.rotation.set(c.pitch + tt.pitch, c.heading, tt.roll);
   for (const w of c.wheels) w.rotation.x += vF * dt * 2;
   c.turretYaw = camYaw;
   if (c.turret) c.turret.rotation.y = c.turretYaw - c.heading;
@@ -394,13 +408,13 @@ function vehicleHits(c, dt) {
     if (d < minD) { const nx = dx / d, nz = dz / d, push = minD - d; cp.x += nx * push; cp.z += nz * push; cp.vx = (cp.vx || 0) + nx * sp * 0.8; cp.vz = (cp.vz || 0) + nz * sp * 0.8; c.vx -= nx * sp * 0.3; c.vz -= nz * sp * 0.3; }
   }
   c.x = THREE.MathUtils.clamp(c.x, 2, WORLD.SIZE - 2); c.z = THREE.MathUtils.clamp(c.z, 2, WORLD.SIZE - 2);
-  c.group.position.x = c.x; c.group.position.z = c.z;
+  c.group.position.set(c.x, city.groundH(c.x, c.z), c.z);
 }
 
 // ---- show the player as a rider sitting on a bike ----
 function showRider(c) {
   me.char.group.visible = !me.fp;
-  me.char.group.position.set(c.x, 0.18, c.z);
+  me.char.group.position.set(c.x, city.groundH(c.x, c.z) + 0.18, c.z);
   me.char.group.rotation.set(0, c.heading, c.roll * 0.6);
   const p = me.char.parts;
   p.armL.rotation.set(-1.1, 0, 0.2); p.armR.rotation.set(-1.1, 0, -0.2);
@@ -429,7 +443,7 @@ function updatePlayer(dt) {
     } else if (v.type === 'tank') {
       driveTank(v, dt);
       vehicleHits(v, dt);
-      me.pos.set(v.x, 0, v.z); me.heading = v.heading;
+      me.pos.set(v.x, city.groundH(v.x, v.z), v.z); me.heading = v.heading;
       me.char.group.visible = false;
     } else if (v.type === 'boat') {
       driveBoat(v, dt);
@@ -438,7 +452,7 @@ function updatePlayer(dt) {
     } else {
       driveCar(v, dt);
       vehicleHits(v, dt);
-      me.pos.set(v.x, 0, v.z); me.heading = v.heading;
+      me.pos.set(v.x, city.groundH(v.x, v.z), v.z); me.heading = v.heading;
       if (v.type === 'bike') showRider(v); else me.char.group.visible = false;
     }
   } else {
@@ -467,6 +481,7 @@ function updatePlayer(dt) {
     if (me.aiming) me.heading = camYaw; else if (moving) me.heading = Math.atan2(md.x, md.z);
     me.char.group.position.copy(me.pos); me.char.group.visible = me.alive && !me.fp;
     if (swimming) {                                    // prone swim stroke, low in the water
+      me.char.group.rotation.order = 'YXZ';            // yaw first → forward lean stays forward when turning (no sideways tilt)
       me.char.group.rotation.set(0.7, me.heading, 0);
       me.walkT += dt * 5; const s = Math.sin(me.walkT), p = me.char.parts;
       p.armL.rotation.set(-1.7 + s * 0.9, 0, 0.25); p.armR.rotation.set(-1.7 - s * 0.9, 0, -0.25);
@@ -729,7 +744,7 @@ function hideLockHud() { const el = $('lockon'); if (el) el.classList.remove('sh
 
 function insideBuilding(x, z) { for (const b of buildings) if (Math.abs(x - b.x) < b.w / 2 + 0.4 && Math.abs(z - b.z) < b.d / 2 + 0.4) return true; return false; }
 // tallest building roof at (x,z), or 0 — lets aircraft fly OVER roofs instead of hitting an infinite hitbox
-function buildingTopAt(x, z) { let top = 0; for (const b of buildings) if (Math.abs(x - b.x) < b.w / 2 + 0.4 && Math.abs(z - b.z) < b.d / 2 + 0.4) top = Math.max(top, b.h || 60); return top; }
+function buildingTopAt(x, z) { let top = 0; for (const b of buildings) if (Math.abs(x - b.x) < b.w / 2 + 0.4 && Math.abs(z - b.z) < b.d / 2 + 0.4) top = Math.max(top, (b.base || 0) + (b.h || 60)); return top; }
 
 // ---------- explosive barrels (deterministic positions = same for all players) ----------
 const barrels = [];
@@ -739,7 +754,7 @@ const barrels = [];
     const sp = city.spawns[(i * 5) % city.spawns.length] || { x: 100, z: 100 };
     const x = sp.x + ((i * 37) % 26 - 13), z = sp.z + ((i * 53) % 26 - 13);
     if (!city.isLandCell(x, z) || insideBuilding(x, z)) continue;
-    const m = new THREE.Mesh(geo, mat); m.position.set(x, 0.5, z); m.castShadow = true;
+    const m = new THREE.Mesh(geo, mat); m.position.set(x, city.groundH(x, z) + 0.5, z); m.castShadow = true;
     const band = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.16, 10), ring); band.position.y = 0.1; m.add(band);
     scene.add(m); barrels.push({ x, z, mesh: m, alive: true, respawnAt: 0 });
   }
@@ -770,10 +785,11 @@ function spawnPed() {
   const x = me.pos.x + Math.cos(ang) * d, z = me.pos.z + Math.sin(ang) * d;
   if (x < 4 || z < 4 || x > WORLD.SIZE - 4 || z > WORLD.SIZE - 4 || !city.isLandCell(x, z) || insideBuilding(x, z)) return false;
   const ch = makeChar(PED_COLORS[(Math.random() * PED_COLORS.length) | 0]); ch.group.position.set(x, 0, z); scene.add(ch.group);
+  const heading = Math.random() * Math.PI * 2;
   peds.push({
-    char: ch, x, z, heading: Math.random() * Math.PI * 2, speed: 1.4 + Math.random(), state: 'wander', fleeT: 0, retarget: 0, walkT: 0, alive: true, removeAt: 0,
-    flee() { this.state = 'flee'; this.fleeT = 4; this.speed = 5; },
-    die() { this.alive = false; this.char.group.rotation.z = Math.PI / 2; this.char.group.position.y = 0.3; this.removeAt = performance.now() + 9000; },
+    char: ch, x, z, heading, targetHeading: heading, speed: 0.9 + Math.random() * 0.6, state: 'wander', fleeT: 0, retarget: 0, walkT: 0, alive: true, removeAt: 0,
+    flee() { this.state = 'flee'; this.fleeT = 3; this.speed = 3.2; },
+    die() { this.alive = false; this.char.group.rotation.z = Math.PI / 2; this.char.group.position.y = city.groundH(this.x, this.z) + 0.3; this.removeAt = performance.now() + 9000; },
   });
   return true;
 }
@@ -781,18 +797,22 @@ function updatePeds(dt) {
   for (let i = peds.length - 1; i >= 0; i--) {
     const p = peds[i];
     if (!p.alive) { if (performance.now() > p.removeAt) { scene.remove(p.char.group); peds.splice(i, 1); } continue; }
-    if (Math.hypot(p.x - me.pos.x, p.z - me.pos.z) > 115) { scene.remove(p.char.group); peds.splice(i, 1); continue; }
-    p.retarget -= dt; p.walkT += dt * 6;
-    if (p.state === 'flee') { p.fleeT -= dt; p.heading = Math.atan2(p.x - me.pos.x, p.z - me.pos.z); if (p.fleeT <= 0) { p.state = 'wander'; p.speed = 1.4 + Math.random(); } }
-    else if (p.retarget <= 0) { p.retarget = 2 + Math.random() * 4; p.heading += (Math.random() - 0.5) * 2; }
+    if (Math.hypot(p.x - me.pos.x, p.z - me.pos.z) > 125) { scene.remove(p.char.group); peds.splice(i, 1); continue; }
+    p.retarget -= dt;
+    if (p.state === 'flee') { p.fleeT -= dt; p.targetHeading = Math.atan2(p.x - me.pos.x, p.z - me.pos.z); if (p.fleeT <= 0) { p.state = 'wander'; p.speed = 0.9 + Math.random() * 0.6; } }
+    else if (p.retarget <= 0) { p.retarget = 5 + Math.random() * 6; p.targetHeading += (Math.random() - 0.5) * 1.3; }   // gentle occasional turn
+    let dh = p.targetHeading - p.heading; while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
+    p.heading += dh * Math.min(1, dt * 3);              // smooth, non-jittery turning
     const nx = p.x + Math.sin(p.heading) * p.speed * dt, nz = p.z + Math.cos(p.heading) * p.speed * dt;
-    if (!insideBuilding(nx, p.z) && city.isLandCell(nx, p.z)) p.x = nx; else p.heading += 2.3;   // stay on land
-    if (!insideBuilding(p.x, nz) && city.isLandCell(p.x, nz)) p.z = nz; else p.heading += 2.3;
-    if (p.x < 3 || p.x > WORLD.SIZE - 3 || p.z < 3 || p.z > WORLD.SIZE - 3) p.heading += Math.PI;
-    p.x = THREE.MathUtils.clamp(p.x, 3, WORLD.SIZE - 3); p.z = THREE.MathUtils.clamp(p.z, 3, WORLD.SIZE - 3);
-    p.char.group.position.set(p.x, 0, p.z); p.char.group.rotation.y = p.heading; p.char.setPose(p.walkT, true, false);
+    let blocked = false;
+    if (!insideBuilding(nx, p.z) && city.isLandCell(nx, p.z)) p.x = nx; else blocked = true;
+    if (!insideBuilding(p.x, nz) && city.isLandCell(p.x, nz)) p.z = nz; else blocked = true;
+    if (blocked) p.targetHeading += 1.8 + Math.random();
+    if (p.x < 4 || p.x > WORLD.SIZE - 4 || p.z < 4 || p.z > WORLD.SIZE - 4) { p.targetHeading += Math.PI; p.x = THREE.MathUtils.clamp(p.x, 4, WORLD.SIZE - 4); p.z = THREE.MathUtils.clamp(p.z, 4, WORLD.SIZE - 4); }
+    p.walkT += dt * p.speed * 4;
+    p.char.group.position.set(p.x, city.groundH(p.x, p.z), p.z); p.char.group.rotation.y = p.heading; p.char.setPose(p.walkT, true, false);
   }
-  let guard = 0; while (peds.filter(p => p.alive).length < 22 && guard++ < 6) if (!spawnPed()) break;
+  let guard = 0; while (peds.filter(p => p.alive).length < 8 && guard++ < 3) if (!spawnPed()) break;   // far fewer pedestrians
 }
 
 // ---------- traffic ----------
@@ -817,7 +837,7 @@ function updateTraffic(dt) {
   for (const t of traffic) {
     if (t.knockT > 0) {                                // got hit — tumble out before resuming the lane
       t.knockT -= dt; t.x = THREE.MathUtils.clamp(t.x + t.kx * dt, 4, WORLD.SIZE - 4); t.z = THREE.MathUtils.clamp(t.z + t.kz * dt, 4, WORLD.SIZE - 4);
-      t.kx *= 0.9; t.kz *= 0.9; t.car.group.position.set(t.x, 0, t.z); t.car.group.rotation.y += dt * 4;
+      t.kx *= 0.9; t.kz *= 0.9; t.car.group.position.set(t.x, city.groundH(t.x, t.z), t.z); t.car.group.rotation.y += dt * 4;
       if (t.knockT <= 0) t.lane = Math.round((t.axis === 'x' ? t.z : t.x) / WORLD.BLOCK) * WORLD.BLOCK;
       continue;
     }
@@ -827,7 +847,7 @@ function updateTraffic(dt) {
     if (t.axis === 'x') { t.x += t.dir * t.speed * dt; t.z = t.lane; if (t.x < 4 || t.x > WORLD.SIZE - 4 || !city.isLandCell(t.x, t.z)) { t.dir *= -1; t.x = THREE.MathUtils.clamp(t.x - t.dir * 0.5, 4, WORLD.SIZE - 4); } t.car.group.rotation.y = t.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
     else { t.z += t.dir * t.speed * dt; t.x = t.lane; if (t.z < 4 || t.z > WORLD.SIZE - 4 || !city.isLandCell(t.x, t.z)) { t.dir *= -1; t.z = THREE.MathUtils.clamp(t.z - t.dir * 0.5, 4, WORLD.SIZE - 4); } t.car.group.rotation.y = t.dir > 0 ? 0 : Math.PI; }
     t.lane = THREE.MathUtils.clamp(t.lane, WORLD.BLOCK, WORLD.SIZE - WORLD.BLOCK);
-    t.car.group.position.set(t.x, 0, t.z);
+    t.car.group.position.set(t.x, city.groundH(t.x, t.z), t.z);
     for (const w of t.car.wheels) w.rotation.x += t.speed * dt * 2;
   }
   let g = 0; while (traffic.length < 12 && g++ < 3) if (!spawnOneTraffic(true)) break;   // refill destroyed/jacked traffic
@@ -854,7 +874,7 @@ function updateCops(dt) {
     let nx = cp.x + cp.vx * dt, nz = cp.z + cp.vz * dt;
     if (insideBuilding(nx, cp.z) || !city.isLandCell(nx, cp.z)) { cp.vx *= -0.3; nx = cp.x; } if (insideBuilding(cp.x, nz) || !city.isLandCell(cp.x, nz)) { cp.vz *= -0.3; nz = cp.z; }
     cp.x = THREE.MathUtils.clamp(nx, 3, WORLD.SIZE - 3); cp.z = THREE.MathUtils.clamp(nz, 3, WORLD.SIZE - 3); cp.heading = Math.atan2(dx, dz);
-    cp.car.group.position.set(cp.x, 0, cp.z); cp.car.group.rotation.y = cp.heading;
+    cp.car.group.position.set(cp.x, city.groundH(cp.x, cp.z), cp.z); cp.car.group.rotation.y = cp.heading;
     for (const w of cp.car.wheels) w.rotation.x += d * dt * 0.1;
     if (cp.car.lightbar) { const f = Math.sin(performance.now() / 120) > 0; cp.car.lightbar.userData.red.material.emissiveIntensity = f ? 2 : 0.2; cp.car.lightbar.userData.blue.material.emissiveIntensity = f ? 0.2 : 2; }
     if (canShoot && d < 42 && me.alive && losClear(cp.x, cp.z, me.pos.x, me.pos.z)) { addTracer(new THREE.Vector3(cp.x, 1.4, cp.z), new THREE.Vector3(me.pos.x, 1.2, me.pos.z)); gun(0.3); if (Math.random() < 0.4 && !me.god) net.send({ t: 'selfhit', dmg: 4 + me.wanted * 2 }); }
@@ -883,7 +903,7 @@ function updateFootCops(dt) {
     const nx = fc.x + (dx / d) * step, nz = fc.z + (dz / d) * step;
     if (!insideBuilding(nx, fc.z) && city.isLandCell(nx, fc.z)) fc.x = nx; if (!insideBuilding(fc.x, nz) && city.isLandCell(fc.x, nz)) fc.z = nz;
     fc.x = THREE.MathUtils.clamp(fc.x, 3, WORLD.SIZE - 3); fc.z = THREE.MathUtils.clamp(fc.z, 3, WORLD.SIZE - 3);
-    fc.char.group.position.set(fc.x, 0, fc.z); fc.char.group.rotation.y = fc.heading;
+    fc.char.group.position.set(fc.x, city.groundH(fc.x, fc.z), fc.z); fc.char.group.rotation.y = fc.heading;
     fc.walkT += dt * 7; fc.char.setPose(fc.walkT, d > 13, true);
     fc.shootCd -= dt;
     if (fc.shootCd <= 0 && d < 40 && me.alive && losClear(fc.x, fc.z, me.pos.x, me.pos.z)) {
@@ -916,15 +936,15 @@ function spawnPickups() {
     const sp = city.spawns[(Math.random() * city.spawns.length) | 0] || { x: 60, z: 60 };
     const type = types[i % types.length], col = type === 'health' ? 0x2ecc71 : type === 'smg' ? 0xf39c12 : type === 'shotgun' ? 0xe74c3c : type === 'rpg' ? 0x9b59b6 : type === 'sniper' ? 0x1abc9c : type === 'homing' ? 0xff7043 : 0x3498db;
     const mesh = makePickupMesh(type, col);
-    const x = sp.x + (Math.random() - 0.5) * 18, z = sp.z + (Math.random() - 0.5) * 18; mesh.position.set(x, 1, z); scene.add(mesh);
-    pickups.push({ x, z, type, mesh, taken: false, respawnAt: 0 });
+    const x = sp.x + (Math.random() - 0.5) * 18, z = sp.z + (Math.random() - 0.5) * 18, gy = city.groundH(x, z); mesh.position.set(x, gy + 1, z); scene.add(mesh);
+    pickups.push({ x, z, gy, type, mesh, taken: false, respawnAt: 0 });
   }
 }
 function updatePickups(dt) {
   const now = performance.now();
   for (const p of pickups) {
     if (p.taken) { if (now > p.respawnAt) { p.taken = false; p.mesh.visible = true; } continue; }
-    p.mesh.rotation.y += dt * 2; p.mesh.position.y = 1 + Math.sin(now / 400) * 0.15;
+    p.mesh.rotation.y += dt * 2; p.mesh.position.y = (p.gy || 0) + 1 + Math.sin(now / 400) * 0.15;
     if (me.alive && Math.hypot(p.x - me.pos.x, p.z - me.pos.z) < 1.9) {
       p.taken = true; p.mesh.visible = false; p.respawnAt = now + 25000;
       if (p.type === 'health') { net.send({ t: 'heal', amount: 40 }); notice('+40 health'); }
@@ -954,7 +974,7 @@ function spawnStationCop(police) {
       const c = makeCar(0x1a2740, true); c.x = police.x - 15 + (i % 2) * 30; c.z = police.z + 16 + ((i / 2) | 0) * 6;
       if (!city.isLandCell(c.x, c.z)) { c.x = police.x + (i - 1.5) * 6; c.z = police.z + 10; }
       c.heading = Math.PI; c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = 0x1a2740; c.occupant = null; c.roll = 0; c.pitch = 0; c.type = 'car';
-      c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c);
+      c.group.position.set(c.x, city.groundH(c.x, c.z), c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c);
     }
     for (let i = 0; i < 5; i++) spawnStationCop(police);
   }
@@ -969,7 +989,7 @@ function updateStationCops(dt) {
     if (s.retarget <= 0) { s.retarget = 2 + Math.random() * 3; s.tx = s.hx + (Math.random() - 0.5) * 20; s.tz = s.hz + (Math.random() - 0.5) * 12; }
     const dx = s.tx - s.x, dz = s.tz - s.z, d = Math.hypot(dx, dz), moving = d > 0.4;
     if (moving) { s.x += dx / d * 1.6 * dt; s.z += dz / d * 1.6 * dt; s.heading = Math.atan2(dx, dz); }
-    s.char.group.position.set(s.x, 0, s.z); s.char.group.rotation.y = s.heading; s.walkT += dt * 6; s.char.setPose(s.walkT, moving, false);
+    s.char.group.position.set(s.x, city.groundH(s.x, s.z), s.z); s.char.group.rotation.y = s.heading; s.walkT += dt * 6; s.char.setPose(s.walkT, moving, false);
   }
 }
 function updateSchoolKids(dt) {
@@ -983,7 +1003,7 @@ function updateSchoolKids(dt) {
     const nx = k.x + Math.sin(k.heading) * k.speed * dt, nz = k.z + Math.cos(k.heading) * k.speed * dt;
     if (Math.hypot(nx - cx, nz - cz) > 22 || insideBuilding(nx, nz)) k.heading += Math.PI + (Math.random() - 0.5);
     else { k.x = nx; k.z = nz; }
-    k.char.group.position.set(k.x, 0, k.z); k.char.group.rotation.y = k.heading; k.char.setPose(k.walkT, true, false);
+    k.char.group.position.set(k.x, city.groundH(k.x, k.z), k.z); k.char.group.rotation.y = k.heading; k.char.setPose(k.walkT, true, false);
   }
 }
 
@@ -1024,13 +1044,14 @@ function updateRemotes(dt) {
     let d = r.a - r.da; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; r.da += d * Math.min(1, dt * 14);
     const moved = Math.hypot(r.vx || 0, r.vz || 0) > 0.35, vt = r.vt | 0, p = r.char.parts;
     r.car.group.visible = vt === 1 && r.alive; r.bike.group.visible = vt === 2 && r.alive; r.heli.group.visible = vt === 3 && r.alive; r.tank.group.visible = vt === 4 && r.alive; r.boat.group.visible = vt === 5 && r.alive;
-    if (vt === 1) { r.car.group.position.set(r.dx, 0, r.dz); r.car.group.rotation.y = r.da; r.char.group.visible = false; }
+    const rgy = city.groundH(r.dx, r.dz);
+    if (vt === 1) { r.car.group.position.set(r.dx, rgy, r.dz); r.car.group.rotation.y = r.da; r.char.group.visible = false; }
     else if (vt === 5) { r.boat.group.position.set(r.dx, -0.15, r.dz); r.boat.group.rotation.y = r.da; r.char.group.visible = false; }
-    else if (vt === 4) { r.tank.group.position.set(r.dx, 0, r.dz); r.tank.group.rotation.y = r.da; if (r.tank.turret) r.tank.turret.rotation.y = (r.tu || 0) - r.da; r.char.group.visible = false; }
+    else if (vt === 4) { r.tank.group.position.set(r.dx, rgy, r.dz); r.tank.group.rotation.y = r.da; if (r.tank.turret) r.tank.turret.rotation.y = (r.tu || 0) - r.da; r.char.group.visible = false; }
     else if (vt === 3) { r.heli.group.position.set(r.dx, r.dvy, r.dz); r.heli.group.rotation.y = r.da; if (r.heli.rotor) r.heli.rotor.rotation.y += dt * 32; r.char.group.visible = false; }
-    else if (vt === 2) { r.bike.group.position.set(r.dx, 0, r.dz); r.bike.group.rotation.y = r.da; r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0.18, r.dz); r.char.group.rotation.set(0, r.da, 0); p.armL.rotation.set(-1.1, 0, 0.2); p.armR.rotation.set(-1.1, 0, -0.2); p.legL.rotation.set(0.5, 0, 0.28); p.legR.rotation.set(0.5, 0, -0.28); }
-    else { r.char.group.visible = r.alive; r.char.group.position.set(r.dx, 0, r.dz); r.char.group.rotation.set(0, r.da, 0); p.legL.rotation.z = 0; p.legR.rotation.z = 0; r.walkT += dt * 6; r.char.setPose(r.walkT, moved, false); if (r.em > 0 && EMOTES[r.em - 1]) EMOTES[r.em - 1].anim(p, performance.now() / 1000); }
-    r.tag.visible = r.alive; r.tag.position.set(r.dx, (vt === 3 ? r.dvy + 2.6 : vt ? 2.4 : 2.3), r.dz);
+    else if (vt === 2) { r.bike.group.position.set(r.dx, rgy, r.dz); r.bike.group.rotation.y = r.da; r.char.group.visible = r.alive; r.char.group.position.set(r.dx, rgy + 0.18, r.dz); r.char.group.rotation.set(0, r.da, 0); p.armL.rotation.set(-1.1, 0, 0.2); p.armR.rotation.set(-1.1, 0, -0.2); p.legL.rotation.set(0.5, 0, 0.28); p.legR.rotation.set(0.5, 0, -0.28); }
+    else { r.char.group.visible = r.alive; r.char.group.position.set(r.dx, rgy, r.dz); r.char.group.rotation.set(0, r.da, 0); p.legL.rotation.z = 0; p.legR.rotation.z = 0; r.walkT += dt * 6; r.char.setPose(r.walkT, moved, false); if (r.em > 0 && EMOTES[r.em - 1]) EMOTES[r.em - 1].anim(p, performance.now() / 1000); }
+    r.tag.visible = r.alive; r.tag.position.set(r.dx, rgy + (vt === 3 ? r.dvy + 2.6 : vt ? 2.4 : 2.3), r.dz);
   }
 }
 
@@ -1178,25 +1199,25 @@ function giveCar() {
   const colHex = 0x0d0f12, c = makeCar(colHex);
   c.x = me.pos.x + Math.sin(me.heading + Math.PI / 2) * 3; c.z = me.pos.z + Math.cos(me.heading + Math.PI / 2) * 3;
   c.heading = me.heading; c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = colHex; c.occupant = null; c.roll = 0; c.pitch = 0; c.type = 'car';
-  c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c); return c;
+  c.group.position.set(c.x, city.groundH(c.x, c.z), c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c); return c;
 }
 function giveBike() {
   const colHex = 0x111316, b = makeBike(colHex);
   b.x = me.pos.x + Math.sin(me.heading + Math.PI / 2) * 2.5; b.z = me.pos.z + Math.cos(me.heading + Math.PI / 2) * 2.5;
   b.heading = me.heading; b.speed = 0; b.vx = 0; b.vz = 0; b.colHex = colHex; b.occupant = null; b.roll = 0; b.pitch = 0; b.type = 'bike';
-  b.group.position.set(b.x, 0, b.z); b.group.rotation.y = b.heading; scene.add(b.group); cars.push(b); return b;
+  b.group.position.set(b.x, city.groundH(b.x, b.z), b.z); b.group.rotation.y = b.heading; scene.add(b.group); cars.push(b); return b;
 }
 function giveHeli() {
   const h = makeHeli(0x2c3e57);
   h.x = me.pos.x + Math.sin(me.heading) * 6; h.z = me.pos.z + Math.cos(me.heading) * 6; h.y = 0;
   h.heading = me.heading; h.speed = 0; h.vx = 0; h.vz = 0; h.colHex = 0x2c3e57; h.occupant = null; h.roll = 0; h.pitch = 0; h.type = 'heli'; h.rotorSpin = 0;
-  h.group.position.set(h.x, 0, h.z); scene.add(h.group); cars.push(h); return h;
+  h.group.position.set(h.x, city.groundH(h.x, h.z), h.z); scene.add(h.group); cars.push(h); return h;
 }
 function giveTank() {
   const t = makeTank(0x5a6b3a);
   t.x = me.pos.x + Math.sin(me.heading) * 7; t.z = me.pos.z + Math.cos(me.heading) * 7;
   t.heading = me.heading; t.speed = 0; t.vx = 0; t.vz = 0; t.colHex = 0x5a6b3a; t.occupant = null; t.roll = 0; t.pitch = 0; t.type = 'tank'; t.turretYaw = me.heading; t.tShootCd = 0;
-  t.group.position.set(t.x, 0, t.z); t.group.rotation.y = t.heading; scene.add(t.group); cars.push(t); return t;
+  t.group.position.set(t.x, city.groundH(t.x, t.z), t.z); t.group.rotation.y = t.heading; scene.add(t.group); cars.push(t); return t;
 }
 function giveBoat() {
   const col = 0xe8e8e8, b = makeBoat(col);
