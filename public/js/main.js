@@ -17,9 +17,9 @@ renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fc4e8);
-scene.fog = new THREE.Fog(0x9fc4e8, 120, 360);
+scene.fog = new THREE.Fog(0x9fc4e8, 240, 1000);
 
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 1200);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 4000);
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // lights — warm sun + soft sky fill (the key to a clean stylized look)
@@ -132,7 +132,7 @@ const WORDER = ['fists', 'pistol', 'smg', 'shotgun', 'rifle', 'sniper', 'rpg', '
 const owns = w => w === 'fists' || w === 'pistol' || me.ammo[w] > 0;
 const me = {
   id: null, name: 'Player', colorHex: 0x3aa0ff,
-  pos: new THREE.Vector3(WORLD.SIZE / 2, 0, WORLD.SIZE / 2 - 20), heading: 0, vy: 0, onGround: true,
+  pos: new THREE.Vector3(300, 0, 360), heading: 0, vy: 0, onGround: true,
   hp: 100, alive: true, kills: 0, inCar: null, aiming: false, walkT: 0, shootCd: 0, fp: false,
   weapon: 'pistol', ammo: { pistol: Infinity, smg: 0, shotgun: 0, rifle: 0, sniper: 0, rpg: 0, homing: 0 },
   wanted: 0, heat: 0, lastCrime: 0, lockTarget: null, lockT: 0, locked: false,
@@ -221,10 +221,11 @@ function driveHeli(c, dt) {
   c.vx += (fx * thr * 30 * power - c.vx) * Math.min(1, dt * 1.6);
   c.vz += (fz * thr * 30 * power - c.vz) * Math.min(1, dt * 1.6);
   c.vx *= 1 - dt * 0.55; c.vz *= 1 - dt * 0.55;
-  c.x = THREE.MathUtils.clamp(c.x + c.vx * dt, 4, WORLD.SIZE - 4);
-  c.z = THREE.MathUtils.clamp(c.z + c.vz * dt, 4, WORLD.SIZE - 4);
-  c.pitch = THREE.MathUtils.lerp(c.pitch || 0, -thr * 0.22, 0.1);
-  c.roll = THREE.MathUtils.lerp(c.roll || 0, -steer * 0.35, 0.12);
+  let nx = THREE.MathUtils.clamp(c.x + c.vx * dt, 4, WORLD.SIZE - 4), nz = THREE.MathUtils.clamp(c.z + c.vz * dt, 4, WORLD.SIZE - 4);
+  if (c.y < buildingTopAt(nx, nz) + 0.6) { nx = c.x; nz = c.z; c.vx *= 0.2; c.vz *= 0.2; }   // can't fly THROUGH a building — climb over it
+  c.x = nx; c.z = nz;
+  c.pitch = THREE.MathUtils.lerp(c.pitch || 0, thr * 0.24, 0.1);       // nose dips forward when accelerating
+  c.roll = THREE.MathUtils.lerp(c.roll || 0, steer * 0.36, 0.12);      // banks into the turn
   c.speed = Math.hypot(c.vx, c.vz);
   c.group.position.set(c.x, c.y, c.z);
   c.group.rotation.order = 'YXZ';                      // yaw→pitch→roll so banking looks right (no gimbal flip on turns)
@@ -424,7 +425,7 @@ function updateCamera(dt) {
   // position: behind (horizontal) and above; keep out of buildings
   const back = new THREE.Vector3(Math.sin(camYaw), 0, Math.cos(camYaw));
   const desired = camPivot.clone().addScaledVector(back, -dist); desired.y = camPivot.y + baseH;
-  const [rx, rz] = resolve(desired.x, desired.z, 1.0); desired.x = rx; desired.z = rz;
+  if (desired.y < buildingTopAt(desired.x, desired.z) + 2) { const [rx, rz] = resolve(desired.x, desired.z, 1.0); desired.x = rx; desired.z = rz; }
   camera.position.lerp(desired, me.inCar ? 0.18 : 0.4);
   if (shake > 0) { camera.position.x += (Math.random() - 0.5) * shake; camera.position.y += (Math.random() - 0.5) * shake; shake = Math.max(0, shake - dt * 2); }
   // look: aim direction (mouse pitch) with a slight downward bias so the player stays in frame
@@ -539,7 +540,7 @@ function updateRockets(dt) {
     rk.pos.addScaledVector(rk.dir, rk.speed * dt);
     rk.mesh.position.copy(rk.pos); rk.mesh.lookAt(rk.pos.clone().add(rk.dir));
     if (Math.random() < 0.85) addSpark(rk.pos.clone(), rk.homing ? 0xffcc55 : 0x9a9a9a, 1, 1.2);
-    let hit = rk.life <= 0 || rk.pos.y <= 0.25 || (rk.pos.y < 28 && insideBuilding(rk.pos.x, rk.pos.z));
+    let hit = rk.life <= 0 || rk.pos.y <= 0.25 || rk.pos.y < buildingTopAt(rk.pos.x, rk.pos.z);
     if (!hit && !rk.ghost) {            // only the shooter's rocket resolves damage (authoritative)
       const at = (x, y, z, r) => rk.pos.distanceToSquared(new THREE.Vector3(x, y, z)) < r * r;
       for (const pd of peds) if (pd.alive && at(pd.x, 1, pd.z, 2)) { hit = true; break; }
@@ -615,6 +616,8 @@ function updateLockHud() {
 function hideLockHud() { const el = $('lockon'); if (el) el.classList.remove('show'); }
 
 function insideBuilding(x, z) { for (const b of buildings) if (Math.abs(x - b.x) < b.w / 2 + 0.4 && Math.abs(z - b.z) < b.d / 2 + 0.4) return true; return false; }
+// tallest building roof at (x,z), or 0 — lets aircraft fly OVER roofs instead of hitting an infinite hitbox
+function buildingTopAt(x, z) { let top = 0; for (const b of buildings) if (Math.abs(x - b.x) < b.w / 2 + 0.4 && Math.abs(z - b.z) < b.d / 2 + 0.4) top = Math.max(top, b.h || 60); return top; }
 
 // ---------- explosive barrels (deterministic positions = same for all players) ----------
 const barrels = [];
@@ -811,6 +814,52 @@ function updatePickups(dt) {
   }
 }
 
+// ---------- landmark life: police-station cops/cars + school kids ----------
+const stationCops = [], schoolKids = [];
+(function spawnLandmarkLife() {
+  const police = city.landmarks.find(l => l.type === 'police'), school = city.landmarks.find(l => l.type === 'school');
+  if (police) {
+    for (let i = 0; i < 4; i++) {
+      const c = makeCar(0x1a2740, true); c.x = police.x - 15 + (i % 2) * 30; c.z = police.z + 16 + ((i / 2) | 0) * 6;
+      c.heading = Math.PI; c.speed = 0; c.vx = 0; c.vz = 0; c.colHex = 0x1a2740; c.occupant = null; c.roll = 0; c.pitch = 0; c.type = 'car';
+      c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.heading; scene.add(c.group); cars.push(c);
+    }
+    for (let i = 0; i < 5; i++) {
+      const ch = makeChar(0x22336b, { hair: 0x0d1526, pants: 0x10131c, hat: true }); ch.setWeapon('pistol');
+      const x = police.x + (Math.random() - 0.5) * 22, z = police.z + 14 + Math.random() * 10; ch.group.position.set(x, 0, z); scene.add(ch.group);
+      stationCops.push({ char: ch, x, z, hx: x, hz: z, tx: x, tz: z, heading: 0, walkT: 0, retarget: 0 });
+    }
+  }
+  if (school) {
+    for (let i = 0; i < 11; i++) {
+      const ch = makeChar(PED_COLORS[(Math.random() * PED_COLORS.length) | 0]); ch.group.scale.set(0.6, 0.6, 0.6);
+      const x = school.x + (Math.random() - 0.5) * 24, z = school.z + 18 + (Math.random() - 0.5) * 16; ch.group.position.set(x, 0, z); scene.add(ch.group);
+      schoolKids.push({ char: ch, x, z, heading: Math.random() * 6.28, speed: 2.6 + Math.random() * 1.6, walkT: 0, retarget: 0 });
+    }
+  }
+})();
+function updateStationCops(dt) {
+  for (const s of stationCops) {
+    s.retarget -= dt;
+    if (s.retarget <= 0) { s.retarget = 2 + Math.random() * 3; s.tx = s.hx + (Math.random() - 0.5) * 20; s.tz = s.hz + (Math.random() - 0.5) * 12; }
+    const dx = s.tx - s.x, dz = s.tz - s.z, d = Math.hypot(dx, dz), moving = d > 0.4;
+    if (moving) { s.x += dx / d * 1.6 * dt; s.z += dz / d * 1.6 * dt; s.heading = Math.atan2(dx, dz); }
+    s.char.group.position.set(s.x, 0, s.z); s.char.group.rotation.y = s.heading; s.walkT += dt * 6; s.char.setPose(s.walkT, moving, false);
+  }
+}
+function updateSchoolKids(dt) {
+  const school = city.landmarks.find(l => l.type === 'school'); if (!school) return;
+  const cx = school.x, cz = school.z + 16;
+  for (const k of schoolKids) {
+    k.retarget -= dt; k.walkT += dt * 10;
+    if (k.retarget <= 0) { k.retarget = 0.8 + Math.random() * 1.8; k.heading += (Math.random() - 0.5) * 3; }
+    const nx = k.x + Math.sin(k.heading) * k.speed * dt, nz = k.z + Math.cos(k.heading) * k.speed * dt;
+    if (Math.hypot(nx - cx, nz - cz) > 22 || insideBuilding(nx, nz)) k.heading += Math.PI + (Math.random() - 0.5);
+    else { k.x = nx; k.z = nz; }
+    k.char.group.position.set(k.x, 0, k.z); k.char.group.rotation.y = k.heading; k.char.setPose(k.walkT, true, false);
+  }
+}
+
 // ---------- remote players ----------
 const remotes = new Map();
 function addRemote(o) {
@@ -924,6 +973,8 @@ function drawMinimap() {
   for (const c of cops) dot(c.x, c.z, '#3a7bff', 2.2);
   for (const f of footCops) if (f.alive) dot(f.x, f.z, '#66aaff', 1.6);
   for (const r of remotes.values()) if (r.alive) dot(r.dx, r.dz, r.color || '#fff', 2.4);
+  minictx.strokeStyle = '#6b6f78'; minictx.lineWidth = Math.max(2, 13 * scale); minictx.beginPath(); minictx.moveTo(tx(city.bridge.ax), tz(city.bridge.az)); minictx.lineTo(tx(city.bridge.bx), tz(city.bridge.bz)); minictx.stroke();
+  for (const l of city.landmarks) { if (Math.abs(l.x - px) > R || Math.abs(l.z - pz) > R) continue; const col = l.type === 'hospital' ? '#e74c3c' : l.type === 'police' ? '#3a7bff' : l.type === 'school' ? '#f1c40f' : '#e67e22'; minictx.fillStyle = col; minictx.beginPath(); minictx.arc(tx(l.x), tz(l.z), 4, 0, Math.PI * 2); minictx.fill(); minictx.fillStyle = '#000'; minictx.font = 'bold 9px Arial'; minictx.textAlign = 'center'; minictx.textBaseline = 'middle'; minictx.fillText(l.label[0], tx(l.x), tz(l.z)); }
   minictx.save(); minictx.translate(W / 2, H / 2); minictx.rotate(Math.atan2(Math.cos(me.heading), Math.sin(me.heading)));
   minictx.fillStyle = '#ffef99'; minictx.strokeStyle = '#000'; minictx.lineWidth = 1;
   minictx.beginPath(); minictx.moveTo(7, 0); minictx.lineTo(-5, 5); minictx.lineTo(-2, 0); minictx.lineTo(-5, -5); minictx.closePath(); minictx.fill(); minictx.stroke();
@@ -950,6 +1001,15 @@ function drawMap() {
   mctx.fillStyle = '#3a7bff'; for (const c of cops) { mctx.beginPath(); mctx.arc(tx(c.x), tz(c.z), 4, 0, Math.PI * 2); mctx.fill(); }
   mctx.fillStyle = '#66aaff'; for (const f of footCops) if (f.alive) { mctx.beginPath(); mctx.arc(tx(f.x), tz(f.z), 2.5, 0, Math.PI * 2); mctx.fill(); }
   for (const r of remotes.values()) { if (!r.alive) continue; mctx.fillStyle = r.color || '#fff'; mctx.beginPath(); mctx.arc(tx(r.dx), tz(r.dz), 5, 0, Math.PI * 2); mctx.fill(); }
+  // bridge
+  mctx.strokeStyle = '#6b6f78'; mctx.lineWidth = Math.max(2, 13 * scale); mctx.beginPath(); mctx.moveTo(tx(city.bridge.ax), tz(city.bridge.az)); mctx.lineTo(tx(city.bridge.bx), tz(city.bridge.bz)); mctx.stroke();
+  // named landmarks
+  for (const l of city.landmarks) {
+    const col = l.type === 'hospital' ? '#e74c3c' : l.type === 'police' ? '#3a7bff' : l.type === 'school' ? '#f1c40f' : '#e67e22';
+    mctx.fillStyle = col; mctx.beginPath(); mctx.arc(tx(l.x), tz(l.z), 6, 0, Math.PI * 2); mctx.fill();
+    mctx.font = 'bold 13px Arial'; mctx.textAlign = 'left'; mctx.textBaseline = 'middle'; mctx.lineWidth = 3; mctx.strokeStyle = 'rgba(0,0,0,.75)';
+    mctx.strokeText(l.label, tx(l.x) + 9, tz(l.z)); mctx.fillStyle = '#fff'; mctx.fillText(l.label, tx(l.x) + 9, tz(l.z));
+  }
   const a = Math.atan2(Math.cos(me.heading), Math.sin(me.heading));
   mctx.save(); mctx.translate(tx(me.pos.x), tz(me.pos.z)); mctx.rotate(a);
   mctx.fillStyle = '#fff'; mctx.beginPath(); mctx.moveTo(9, 0); mctx.lineTo(-6, 6); mctx.lineTo(-3, 0); mctx.lineTo(-6, -6); mctx.closePath(); mctx.fill();
@@ -1106,11 +1166,11 @@ function renderPreview(dt) {                            // rotating live charact
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, clock.getDelta());
-  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updateFootCops(dt); updatePickups(dt); updateBarrels(); updateWanted(dt); updateRemotes(dt); updateRockets(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); else drawMinimap(); }
+  if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updateFootCops(dt); updateStationCops(dt); updateSchoolKids(dt); updatePickups(dt); updateBarrels(); updateWanted(dt); updateRemotes(dt); updateRockets(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); else drawMinimap(); }
   else { menuA += dt * 0.1; camera.position.set(WORLD.SIZE / 2 + Math.cos(menuA) * 90, 70, WORLD.SIZE / 2 + Math.sin(menuA) * 90); camera.lookAt(WORLD.SIZE / 2, 8, WORLD.SIZE / 2); updateFx(dt); }
   renderer.render(scene, camera);
   if (!playing) renderPreview(dt);
 }
 spawnPickups();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, render: () => renderer.render(scene, camera) };

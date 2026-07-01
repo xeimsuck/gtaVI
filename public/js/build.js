@@ -14,25 +14,61 @@ const FACADES = [0xd98c8c, 0xe0b07e, 0xa9c2d4, 0xc7b3da, 0x9fc7a6, 0xe6d199, 0xc
 // bright shop / awning / neon-sign colours
 const SHOPCOL = [0xe74c3c, 0xf39c12, 0x16a085, 0x2980b9, 0x8e44ad, 0xe84393, 0x00b894, 0xff6b6b];
 
-export const WORLD = { BLOCK: 40, ROAD: 11, GRID: 12 };
-WORLD.SIZE = WORLD.BLOCK * WORLD.GRID;
+export const WORLD = { BLOCK: 40, ROAD: 11, GRID: 26 };
+WORLD.SIZE = WORLD.BLOCK * WORLD.GRID;   // 1040 — big enough for two islands + a bridge
+
+// a readable text sign (unlit canvas texture on a plane)
+function makeSign(text, w, bg, fg) {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 72; const x = cv.getContext('2d');
+  x.fillStyle = bg || '#15181d'; x.fillRect(0, 0, 256, 72);
+  x.strokeStyle = 'rgba(255,255,255,.25)'; x.lineWidth = 4; x.strokeRect(2, 2, 252, 68);
+  x.fillStyle = fg || '#ffffff'; x.font = 'bold 44px Arial'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 128, 38);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 72 / 256), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv) }));
+  return m;
+}
+// an enterable building: 4 walls with a door gap in the front (+z), flat roof, interior floor
+function makeShell(g, buildings, cx, cz, w, d, h, col) {
+  const BOX = new THREE.BoxGeometry(1, 1, 1), mat = STD(col, { roughness: 0.85 }), t = 0.7, doorW = 5;
+  const wall = (x, z, sw, sh, sd) => { const b = new THREE.Mesh(BOX, mat); b.position.set(x, sh / 2, z); b.scale.set(sw, sh, sd); b.castShadow = true; b.receiveShadow = true; g.add(b); buildings.push({ x, z, w: sw, d: sd, h: sh }); };
+  wall(cx, cz - d / 2, w, h, t);                     // back
+  wall(cx - w / 2, cz, t, h, d);                     // left
+  wall(cx + w / 2, cz, t, h, d);                     // right
+  const seg = (w - doorW) / 2;                        // front = two pieces, door gap between
+  wall(cx - (doorW / 2 + seg / 2), cz + d / 2, seg, h, t);
+  wall(cx + (doorW / 2 + seg / 2), cz + d / 2, seg, h, t);
+  const lint = new THREE.Mesh(BOX, mat); lint.position.set(cx, h - 0.6, cz + d / 2); lint.scale.set(doorW, 1.2, t); lint.castShadow = true; g.add(lint);
+  const roof = new THREE.Mesh(BOX, STD(0x3c3f47)); roof.position.set(cx, h + 0.15, cz); roof.scale.set(w + 0.5, 0.3, d + 0.5); roof.castShadow = true; g.add(roof);
+  const fl = new THREE.Mesh(new THREE.PlaneGeometry(w - 1, d - 1), STD(0x9aa0a6, { roughness: 1 })); fl.rotation.x = -Math.PI / 2; fl.position.set(cx, 0.04, cz); fl.receiveShadow = true; g.add(fl);
+}
+function interiorProp(g, x, z, sw, sh, sd, col) { const m = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, sd), STD(col)); m.position.set(x, sh / 2, z); m.castShadow = true; g.add(m); }
 
 export function makeCity(scene, seed = 7) {
   const r = mul(seed);
   const g = new THREE.Group();
-  const buildings = [];   // {x,z,w,d} footprints for collision
+  const buildings = [];
   const spawns = [];
-  const shops = [];       // {x,z,color} for the minimap
-  const B = WORLD.BLOCK, RO = WORLD.ROAD, G = WORLD.GRID, S = WORLD.SIZE, C = S / 2;
+  const shops = [];
+  const landmarks = [];
+  const B = WORLD.BLOCK, RO = WORLD.ROAD, G = WORLD.GRID, S = WORLD.SIZE;
 
-  // ----- organic island shape (wobbly coastline via angular harmonics) -----
-  const R0 = S * 0.47;
-  const islandR = a => R0 * (0.80 + 0.13 * Math.sin(3 * a + 0.9) + 0.085 * Math.sin(5 * a + 2.1) + 0.055 * Math.sin(7 * a + 0.4) + 0.04 * Math.sin(2 * a - 1.0));
-  const isLand = (x, z) => { const dx = x - C, dz = z - C; return Math.hypot(dx, dz) < islandR(Math.atan2(dz, dx)); };
+  // ----- two islands: A (start, smaller) and D (bigger, less gridded) -----
+  const A = { cx: 300, cz: 340, r: 200 }, D = { cx: 760, cz: 720, r: 320 };
+  const wob = (isl, p1, p2, p3) => a => isl.r * (0.80 + 0.13 * Math.sin(3 * a + p1) + 0.085 * Math.sin(5 * a + p2) + 0.055 * Math.sin(7 * a + p3) + 0.04 * Math.sin(2 * a));
+  const wA = wob(A, 0.9, 2.1, 0.4), wD = wob(D, 0.4, 1.7, 2.3);
+  const inA = (x, z) => Math.hypot(x - A.cx, z - A.cz) < wA(Math.atan2(z - A.cz, x - A.cx));
+  const inD = (x, z) => Math.hypot(x - D.cx, z - D.cz) < wD(Math.atan2(z - D.cz, x - D.cx));
 
-  // ocean all around
+  // ----- bridge between the coasts -----
+  const bdx = D.cx - A.cx, bdz = D.cz - A.cz, blen0 = Math.hypot(bdx, bdz), bux = bdx / blen0, buz = bdz / blen0;
+  const pAx = A.cx + bux * (A.r * 0.82), pAz = A.cz + buz * (A.r * 0.82);
+  const pDx = D.cx - bux * (D.r * 0.82), pDz = D.cz - buz * (D.r * 0.82);
+  const bridgeLen = Math.hypot(pDx - pAx, pDz - pAz), bheading = Math.atan2(bux, buz), HALF = 6.5, perpx = -buz, perpz = bux;
+  const onBridge = (x, z) => { const rx = x - pAx, rz = z - pAz, t = rx * bux + rz * buz; if (t < -3 || t > bridgeLen + 3) return false; return Math.abs(rx * perpx + rz * perpz) < HALF; };
+
+  const isLand = (x, z) => inA(x, z) || inD(x, z);
+
   const ocean = new THREE.Mesh(new THREE.PlaneGeometry(S * 6, S * 6), STD(0x2d7da6, { roughness: 0.25, metalness: 0.4 }));
-  ocean.rotation.x = -Math.PI / 2; ocean.position.set(C, -0.6, C); g.add(ocean);
+  ocean.rotation.x = -Math.PI / 2; ocean.position.set(S / 2, -0.6, S / 2); g.add(ocean);
 
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const asphaltMat = STD(0x40434a, { roughness: 1 }), sandMat = STD(0xddc89a, { roughness: 1 });
@@ -40,41 +76,69 @@ export function makeCity(scene, seed = 7) {
   const lineMat = new THREE.MeshBasicMaterial({ color: 0xd8b24a });
   const sandGeo = new THREE.PlaneGeometry(B * 1.22, B * 1.22), asphGeo = new THREE.PlaneGeometry(B, B), lotGeo = new THREE.PlaneGeometry(B - RO, B - RO);
 
-  // precompute which grid cells are land
   const land = []; for (let gx = 0; gx < G; gx++) { land[gx] = []; for (let gz = 0; gz < G; gz++) land[gx][gz] = isLand(gx * B + B / 2, gz * B + B / 2); }
   const isL = (gx, gz) => gx >= 0 && gz >= 0 && gx < G && gz < G && land[gx][gz];
   const landCells = [];
+  for (let gx = 0; gx < G; gx++) for (let gz = 0; gz < G; gz++) if (land[gx][gz]) landCells.push({ gx, gz, cx: gx * B + B / 2, cz: gz * B + B / 2 });
 
-  for (let gx = 0; gx < G; gx++) for (let gz = 0; gz < G; gz++) {
-    if (!land[gx][gz]) continue;
-    const cx = gx * B + B / 2, cz = gz * B + B / 2;
-    landCells.push({ gx, gz, cx, cz });
+  // reserve one land cell for each landmark (nearest to its target)
+  const LMDEF = [
+    { type: 'shop', label: 'SHOP', sbg: '#e67e22', col: 0xd98c5a, tx: A.cx, tz: A.cz + A.r * 0.5 },
+    { type: 'school', label: 'SCHOOL', sbg: '#c9a227', col: 0xe6d199, tx: A.cx - A.r * 0.55, tz: A.cz - A.r * 0.1 },
+    { type: 'hospital', label: 'HOSPITAL', sbg: '#c0392b', col: 0xeef2f4, tx: D.cx - D.r * 0.2, tz: D.cz - D.r * 0.55 },
+    { type: 'police', label: 'POLICE', sbg: '#1f2f5c', col: 0x30416e, tx: D.cx + D.r * 0.5, tz: D.cz + D.r * 0.15 },
+  ];
+  const lmCell = {};
+  for (const lm of LMDEF) { let best = null, bd = 1e9; for (const c of landCells) { const dd = Math.hypot(c.cx - lm.tx, c.cz - lm.tz); if (dd < bd) { bd = dd; best = c; } } if (best) lmCell[best.gx + ',' + best.gz] = lm; }
+
+  for (const c of landCells) {
+    const { gx, gz, cx, cz } = c;
     const coastal = !isL(gx - 1, gz) || !isL(gx + 1, gz) || !isL(gx, gz - 1) || !isL(gx, gz + 1);
     if (coastal) { const sand = new THREE.Mesh(sandGeo, sandMat); sand.rotation.x = -Math.PI / 2; sand.position.set(cx, -0.05, cz); sand.receiveShadow = true; g.add(sand); }
     const asph = new THREE.Mesh(asphGeo, asphaltMat); asph.rotation.x = -Math.PI / 2; asph.position.set(cx, 0.005, cz); asph.receiveShadow = true; g.add(asph);
 
-    const roll = r(), park = roll < 0.12, shop = !park && roll < 0.30;
+    const lm = lmCell[gx + ',' + gz];
+    if (lm) {
+      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);
+      const w = B - RO - 2, d = B - RO - 4, h = (lm.type === 'police' || lm.type === 'hospital') ? 12 : 8.5;
+      makeShell(g, buildings, cx, cz, w, d, h, lm.col);
+      const s1 = makeSign(lm.label, w * 0.8, lm.sbg, '#fff'); s1.position.set(cx, h * 0.62, cz + d / 2 + 0.06); g.add(s1);
+      const s2 = makeSign(lm.label, w * 0.9, lm.sbg, '#fff'); s2.position.set(cx, h + 1.1, cz + d / 2 - 0.2); g.add(s2);
+      const ec = lm.type === 'hospital' ? 0xc0392b : lm.type === 'police' ? 0x2244ff : lm.type === 'school' ? 0xf1c40f : 0xe67e22;
+      const em = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: ec, emissive: ec, emissiveIntensity: 0.55, flatShading: true })); em.position.set(cx + w * 0.32, 2.5, cz + d / 2 + 0.2); em.scale.set(1.3, 1.3, 0.2); g.add(em);
+      if (lm.type === 'hospital') { interiorProp(g, cx - w / 4, cz - d / 5, 1.2, 0.6, 2.4, 0xffffff); interiorProp(g, cx + w / 4, cz - d / 5, 1.2, 0.6, 2.4, 0xffffff); }
+      else if (lm.type === 'police') { interiorProp(g, cx, cz - d / 4, w * 0.5, 0.9, 1.0, 0x394a5a); for (let k = -1; k <= 1; k += 2) interiorProp(g, cx + k * w / 4, cz - d / 3, 0.2, h - 1.5, 2.5, 0x555555); }
+      else if (lm.type === 'school') { for (let k = -1; k <= 1; k++) interiorProp(g, cx + k * 3, cz - d / 5, 1.6, 0.7, 1.0, 0x8a6b2a); }
+      else { for (let k = -1; k <= 1; k += 2) interiorProp(g, cx + k * w / 4, cz, 1.0, h - 2, d * 0.6, 0xbfae8a); }
+      landmarks.push({ type: lm.type, label: lm.label, x: cx, z: cz, door: { x: cx, z: cz + d / 2 + 3 } });
+      spawns.push({ x: cx, z: cz + d / 2 + 5 });
+      continue;
+    }
+
+    const onIslB = inD(cx, cz), ic = onIslB ? D : A;
+    const roll = r(), park = roll < 0.13, shop = !park && roll < 0.28;
     const lot = new THREE.Mesh(lotGeo, park ? parkMat : sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);
 
     if (park) {
       for (let i = 0; i < 4; i++) g.add(makeTree(cx + (r() - 0.5) * (B - RO) * 0.7, cz + (r() - 0.5) * (B - RO) * 0.7, r));
       spawns.push({ x: cx, z: cz });
     } else if (shop) {
-      // low shop with a bright awning + glowing sign
       const w = (B - RO) * 0.86, d = (B - RO) * 0.86, h = 6 + r() * 3, col = FACADES[(r() * FACADES.length) | 0], awnCol = SHOPCOL[(r() * SHOPCOL.length) | 0];
       const m = new THREE.Mesh(boxGeo, STD(col)); m.position.set(cx, h / 2, cz); m.scale.set(w, h, d); m.castShadow = true; m.receiveShadow = true; g.add(m);
       const awn = new THREE.Mesh(boxGeo, STD(awnCol, { roughness: 0.6 })); awn.position.set(cx, 2.5, cz + d / 2 + 0.4); awn.scale.set(w * 0.86, 0.4, 1.2); awn.castShadow = true; g.add(awn);
       const sign = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: awnCol, emissive: awnCol, emissiveIntensity: 0.85, flatShading: true })); sign.position.set(cx, h + 0.7, cz + d / 2 - 0.1); sign.scale.set(w * 0.72, 1.2, 0.3); g.add(sign);
-      buildings.push({ x: cx, z: cz, w, d }); shops.push({ x: cx, z: cz, color: awnCol });
+      buildings.push({ x: cx, z: cz, w, d, h }); shops.push({ x: cx, z: cz, color: awnCol });
       spawns.push({ x: cx, z: cz + d / 2 + 4 });
     } else {
-      const downtown = 1 - Math.hypot(cx - C, cz - C) / (S * 0.55), inner = (B - RO) * 0.84;
+      const downtown = 1 - Math.hypot(cx - ic.cx, cz - ic.cz) / (ic.r * 1.05), inner = (B - RO) * 0.84;
+      const rot = onIslB ? (r() - 0.5) * 0.9 : 0;        // island B rotated → breaks the grid look
       const place = (ox, oz, w, d) => {
-        let h = 7 + Math.pow(r(), 1.7) * (12 + Math.max(0, downtown) * 60);
-        const m = new THREE.Mesh(boxGeo, STD(FACADES[(r() * FACADES.length) | 0])); m.position.set(cx + ox, h / 2, cz + oz); m.scale.set(w, h, d); m.castShadow = true; m.receiveShadow = true; g.add(m);
-        const roof = new THREE.Mesh(boxGeo, STD(0x3c3f47)); roof.position.set(cx + ox, h + 0.4, cz + oz); roof.scale.set(w * 0.96, 0.8, d * 0.96); roof.castShadow = true; g.add(roof);
-        if (h > 12) { const band = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x223, emissive: 0x335, emissiveIntensity: 0.5, flatShading: true })); band.position.set(cx + ox, h * 0.6, cz + oz + d / 2 + 0.05); band.scale.set(w * 0.8, h * 0.5, 0.1); g.add(band); }
-        buildings.push({ x: cx + ox, z: cz + oz, w, d });
+        let h = 7 + Math.pow(r(), 1.7) * (12 + Math.max(0, downtown) * (onIslB ? 80 : 55));
+        const m = new THREE.Mesh(boxGeo, STD(FACADES[(r() * FACADES.length) | 0])); m.position.set(cx + ox, h / 2, cz + oz); m.scale.set(w, h, d); m.rotation.y = rot; m.castShadow = true; m.receiveShadow = true; g.add(m);
+        const roof = new THREE.Mesh(boxGeo, STD(0x3c3f47)); roof.position.set(cx + ox, h + 0.4, cz + oz); roof.scale.set(w * 0.96, 0.8, d * 0.96); roof.rotation.y = rot; roof.castShadow = true; g.add(roof);
+        if (h > 14) { const band = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x223, emissive: 0x335, emissiveIntensity: 0.5, flatShading: true })); band.position.set(cx + ox, h * 0.6, cz + oz); band.scale.set(w * 0.82, h * 0.5, d * 0.82); band.rotation.y = rot; g.add(band); }
+        const cc = Math.abs(Math.cos(rot)), ss = Math.abs(Math.sin(rot));
+        buildings.push({ x: cx + ox, z: cz + oz, w: w * cc + d * ss, d: w * ss + d * cc, h: h + 1 });
       };
       const style = r();
       if (style < 0.5) place(0, 0, inner * (0.7 + r() * 0.25), inner * (0.7 + r() * 0.25));
@@ -82,21 +146,43 @@ export function makeCity(scene, seed = 7) {
       else { const w = inner * 0.42, d = inner * 0.42; for (const sx of [-1, 1]) for (const sz of [-1, 1]) place(sx * inner * 0.24, sz * inner * 0.24, w, d); }
     }
     if (!park) {
-      if (r() < 0.5) g.add(makeLamp(cx + (B - RO) / 2 + 2.2, cz - 7));
-      if (r() < 0.3) g.add(makeHydrant(cx - (B - RO) / 2 - 1.6, cz + 6));
-      if (r() < 0.2) g.add(makeBench(cx + 6, cz + (B - RO) / 2 + 2.2));
+      if (r() < 0.4) g.add(makeLamp(cx + (B - RO) / 2 + 2.2, cz - 7));
+      if (r() < 0.22) g.add(makeHydrant(cx - (B - RO) / 2 - 1.6, cz + 6));
     }
     if (coastal) for (let i = 0; i < 2; i++) g.add(makeTree(cx + (r() - 0.5) * B * 0.8, cz + (r() - 0.5) * B * 0.8, r));
   }
 
-  // dashed lane lines only on real roads (shared edges between two land cells)
   for (let gx = 1; gx < G; gx++) for (let gz = 0; gz < G; gz++) if (land[gx - 1][gz] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const a = new THREE.Mesh(boxGeo, lineMat); a.position.set(gx * B, 0.04, gz * B + B / 2 + t + 2); a.scale.set(0.4, 0.02, 3); g.add(a); }
   for (let gz = 1; gz < G; gz++) for (let gx = 0; gx < G; gx++) if (land[gx][gz - 1] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const b = new THREE.Mesh(boxGeo, lineMat); b.position.set(gx * B + B / 2 + t + 2, 0.04, gz * B); b.scale.set(3, 0.02, 0.4); g.add(b); }
 
-  const isLandCell = (x, z) => { const gx = Math.floor(x / B), gz = Math.floor(z / B); return gx >= 0 && gz >= 0 && gx < G && gz < G && land[gx][gz]; };
-  if (!spawns.length) spawns.push({ x: C, z: C });
+  // ----- bridge deck, railings, towers, cables -----
+  (function bridge() {
+    const deckMat = STD(0x3a3d44, { roughness: 1 }), railMat = STD(0x9aa0a6), towerMat = STD(0xb23a3a, { roughness: 0.6 });
+    const seg = 8, n = Math.ceil(bridgeLen / seg);
+    for (let i = 0; i < n; i++) {
+      const t = Math.min(bridgeLen, (i + 0.5) * seg), x = pAx + bux * t, z = pAz + buz * t;
+      const deck = new THREE.Mesh(boxGeo, deckMat); deck.position.set(x, 0.06, z); deck.scale.set(HALF * 2, 0.3, seg + 0.5); deck.rotation.y = bheading; deck.receiveShadow = true; g.add(deck);
+      if (i % 2 === 0) { const dash = new THREE.Mesh(boxGeo, lineMat); dash.position.set(x, 0.22, z); dash.scale.set(0.4, 0.02, 3); dash.rotation.y = bheading; g.add(dash); }
+      for (const sd of [-1, 1]) { const rail = new THREE.Mesh(boxGeo, railMat); rail.position.set(x + perpx * HALF * sd, 0.6, z + perpz * HALF * sd); rail.scale.set(0.3, 1.1, seg + 0.5); rail.rotation.y = bheading; g.add(rail); }
+    }
+    for (const tt of [0.3, 0.7]) {
+      const t = bridgeLen * tt, x = pAx + bux * t, z = pAz + buz * t;
+      for (const sd of [-1, 1]) {
+        const tx = x + perpx * HALF * sd, tz = z + perpz * HALF * sd;
+        const tower = new THREE.Mesh(boxGeo, towerMat); tower.position.set(tx, 11, tz); tower.scale.set(1.3, 22, 1.3); tower.castShadow = true; g.add(tower);
+        const cross = new THREE.Mesh(boxGeo, towerMat); cross.position.set(tx, 20, tz); cross.scale.set(1.1, 1.4, 1.1); g.add(cross);
+        for (const end of [0, bridgeLen]) {
+          const ex = pAx + bux * end + perpx * HALF * sd, ez = pAz + buz * end + perpz * HALF * sd;
+          g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(tx, 21, tz), new THREE.Vector3(ex, 0.7, ez)]), new THREE.LineBasicMaterial({ color: 0x2a2d33 })));
+        }
+      }
+    }
+  })();
+
+  const isLandCell = (x, z) => { const gx = Math.floor(x / B), gz = Math.floor(z / B); if (gx >= 0 && gz >= 0 && gx < G && gz < G && land[gx][gz]) return true; return onBridge(x, z); };
+  if (!spawns.length) spawns.push({ x: A.cx, z: A.cz });
   scene.add(g);
-  return { group: g, buildings, spawns, shops, isLand, isLandCell, land, landCells };
+  return { group: g, buildings, spawns, shops, landmarks, isLand, isLandCell, land, landCells, islands: { A, D }, bridge: { ax: pAx, az: pAz, bx: pDx, bz: pDz } };
 }
 
 function makeLamp(x, z) {

@@ -24,8 +24,8 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 const players = new Map();
 let NID = 1;
-const SPAWNS = [];   // central band of the 480×480 island (client world = BLOCK*GRID = 480)
-for (let i = 0; i < 24; i++) SPAWNS.push({ x: 150 + (i % 6) * 36, y: 150 + ((i / 6) | 0) * 36 });
+const SPAWNS = [];   // on the start island A (centred ~300,340 in the 1040 world)
+for (let i = 0; i < 24; i++) SPAWNS.push({ x: 250 + (i % 6) * 34, y: 290 + ((i / 6) | 0) * 34 });
 const spawn = () => SPAWNS[(Math.random() * SPAWNS.length) | 0];
 
 function send(p, o) { try { p.ws.send(JSON.stringify(o)); } catch {} }
