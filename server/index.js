@@ -100,7 +100,7 @@ wss.on('connection', (ws) => {
   ws.on('error', () => { players.delete(id); bcast({ t: 'leave', id }); });
 });
 
-function sanitizeLook(l) { const hx = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d; l = l || {}; return { shirt: hx(l.shirt, '#3aa0ff'), skin: hx(l.skin, '#e0ac69'), hair: hx(l.hair, '#20140d'), pants: hx(l.pants, '#2c3e50'), hat: !!l.hat, gender: l.gender === 'f' ? 'f' : 'm' }; }
+function sanitizeLook(l) { const hx = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d; l = l || {}; return { shirt: hx(l.shirt, '#3aa0ff'), skin: hx(l.skin, '#e0ac69'), hair: hx(l.hair, '#20140d'), pants: hx(l.pants, '#2c3e50'), hat: !!l.hat, gender: l.gender === 'f' ? 'f' : 'm', preset: (l.preset === 'fox' || l.preset === 'marina') ? l.preset : '' }; }
 function ent(p) { return { id: p.id, name: p.name, color: p.color, look: p.look, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, wi: p.wi, em: p.em, vx: p.vx, vz: p.vz, cc: p.cc, hp: p.hp, alive: p.alive, kills: p.kills }; }
 
 // 20 Hz snapshot — only joined players exist in the world

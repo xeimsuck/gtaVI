@@ -216,11 +216,11 @@ const me = {
   hp: 100, alive: true, kills: 0, inCar: null, aiming: false, walkT: 0, shootCd: 0, fp: false,
   weapon: 'pistol', ammo: { pistol: Infinity, smg: 0, shotgun: 0, rifle: 0, sniper: 0, rpg: 0, homing: 0 },
   wanted: 0, heat: 0, lastCrime: 0, lockTarget: null, lockT: 0, locked: false, emote: null, emoteT0: 0, chute: null,
-  look: { shirt: '#3aa0ff', skin: '#e0ac69', hair: '#20140d', pants: '#2c3e50', hat: false, gender: 'm' },
+  look: { shirt: '#3aa0ff', skin: '#e0ac69', hair: '#20140d', pants: '#2c3e50', hat: false, gender: 'm', preset: '' },
   char: null,
 };
 const hx2i = v => (v ? parseInt(v.slice(1), 16) : undefined);
-function charFromLook(lk, fallback) { lk = lk || {}; return makeChar(hx2i(lk.shirt) ?? hx2i(fallback) ?? 0x3aa0ff, { skin: hx2i(lk.skin), hair: hx2i(lk.hair), pants: hx2i(lk.pants), hat: !!lk.hat, gender: lk.gender === 'f' ? 'f' : 'm' }); }
+function charFromLook(lk, fallback) { lk = lk || {}; return makeChar(hx2i(lk.shirt) ?? hx2i(fallback) ?? 0x3aa0ff, { skin: hx2i(lk.skin), hair: hx2i(lk.hair), pants: hx2i(lk.pants), hat: !!lk.hat, gender: lk.gender === 'f' ? 'f' : 'm', preset: (lk.preset === 'fox' || lk.preset === 'marina') ? lk.preset : undefined }); }
 function buildChar() { return charFromLook(me.look); }
 me.char = buildChar(); scene.add(me.char.group); me.char.setWeapon(me.weapon);
 function setWeapon(kind) { me.weapon = kind; me.shootCd = 0; if (me.char && me.char.setWeapon) me.char.setWeapon(kind); }
@@ -1251,6 +1251,7 @@ buildSwatches('haircolors', PAL.hair, 'hair');
 buildSwatches('pantscolors', PAL.pants, 'pants');
 if ($('hattoggle')) $('hattoggle').onclick = () => { me.look.hat = !me.look.hat; $('hattoggle').classList.toggle('on', me.look.hat); $('hattoggle').textContent = me.look.hat ? '🧢 Cap: ON' : '🧢 Cap: OFF'; rebuildMe(); };
 if ($('gendersel')) $('gendersel').querySelectorAll('button').forEach(b => b.onclick = () => { me.look.gender = b.dataset.g; $('gendersel').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); rebuildMe(); });
+if ($('presetsel')) $('presetsel').querySelectorAll('button').forEach(b => b.onclick = () => { me.look.preset = b.dataset.p; $('presetsel').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); rebuildMe(); });
 function rebuildMe() { const vis = me.char ? me.char.group.visible : true; if (me.char) scene.remove(me.char.group); me.char = buildChar(); me.char.setWeapon(me.weapon); me.char.group.position.copy(me.pos); me.char.group.visible = vis; scene.add(me.char.group); }
 $('play').onclick = () => { me.name = ($('name').value || 'Player').slice(0, 14); aInit(); net.connect(); net.send({ t: 'join', name: me.name, color: me.look.shirt, look: me.look }); $('menu').style.display = 'none'; $('hud').style.display = 'block'; playing = true; };
 $('name').addEventListener('keydown', e => { if (e.key === 'Enter') $('play').click(); });
