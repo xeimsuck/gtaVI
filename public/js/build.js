@@ -16,6 +16,7 @@ const SHOPCOL = [0xe74c3c, 0xf39c12, 0x16a085, 0x2980b9, 0x8e44ad, 0xe84393, 0x0
 
 export const WORLD = { BLOCK: 40, ROAD: 11, GRID: 26 };
 WORLD.SIZE = WORLD.BLOCK * WORLD.GRID;   // 1040 — big enough for two islands + a bridge
+const SKIRT = 6;                         // bury building bottoms this far so they never float over sloped terrain
 
 // a readable text sign (unlit canvas texture on a plane)
 function makeSign(text, w, bg, fg) {
@@ -29,7 +30,7 @@ function makeSign(text, w, bg, fg) {
 // an enterable building: 4 walls with a door gap in the front (+z), flat roof, interior floor
 function makeShell(g, buildings, cx, cz, w, d, h, col, base = 0) {
   const BOX = new THREE.BoxGeometry(1, 1, 1), mat = STD(col, { roughness: 0.85 }), t = 0.7, doorW = 5;
-  const wall = (x, z, sw, sh, sd) => { const b = new THREE.Mesh(BOX, mat); b.position.set(x, sh / 2, z); b.scale.set(sw, sh, sd); b.castShadow = true; b.receiveShadow = true; g.add(b); buildings.push({ x, z, w: sw, d: sd, h: sh, base }); };
+  const wall = (x, z, sw, sh, sd) => { const b = new THREE.Mesh(BOX, mat); b.position.set(x, sh / 2 - SKIRT / 2, z); b.scale.set(sw, sh + SKIRT, sd); b.castShadow = true; b.receiveShadow = true; g.add(b); buildings.push({ x, z, w: sw, d: sd, h: sh, base }); };
   wall(cx, cz - d / 2, w, h, t);                     // back
   wall(cx - w / 2, cz, t, h, d);                     // left
   wall(cx + w / 2, cz, t, h, d);                     // right
@@ -75,9 +76,18 @@ export function makeCity(scene, seed = 7) {
   // ----- terrain heightfield: 0 at the coasts, rolling hills inland (so the city isn't flat) -----
   const groundH = (x, z) => {
     const inland = Math.max(0, 1 - Math.hypot(x - A.cx, z - A.cz) / A.r, 1 - Math.hypot(x - D.cx, z - D.cz) / D.r);
-    const hills = 3.2 * Math.sin(x * 0.016) * Math.cos(z * 0.015) + 2.4 * Math.cos((x + z) * 0.011 + 1.0);
-    return Math.max(0, inland * 6.5 + hills * inland);   // gentle rolling elevation (0 at coast → ~9 inland)
+    const hills = 10.0 * Math.sin(x * 0.011) * Math.cos(z * 0.010) + 7.0 * Math.cos((x + z) * 0.0075 + 1.0) + 4.0 * Math.sin(x * 0.021 + 1.7) * Math.sin(z * 0.019);
+    return Math.max(0, inland * 9 + hills * inland);      // pronounced yet smooth rolling hills (0 at coast → up to ~28 inland)
   };
+  // a ground tile whose every vertex follows the heightfield → adjacent tiles share edge heights → one seamless, smooth surface
+  const terrainTile = (mat, cx, cz, size, yLift, segs = 4) => {
+    const geo = new THREE.PlaneGeometry(size, size, segs, segs); geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setY(i, groundH(cx + pos.getX(i), cz + pos.getZ(i)) + yLift);
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mat); m.position.set(cx, 0, cz); m.receiveShadow = true; return m;
+  };
+  const conform = (obj, x, zz, gy) => { obj.position.y += groundH(x, zz) - gy; return obj; };   // drop a cell-group child onto the real ground
 
   const ocean = new THREE.Mesh(new THREE.PlaneGeometry(S * 6, S * 6), STD(0x2d7da6, { roughness: 0.25, metalness: 0.4 }));
   ocean.rotation.x = -Math.PI / 2; ocean.position.set(S / 2, -0.9, S / 2); g.add(ocean);
@@ -110,16 +120,16 @@ export function makeCity(scene, seed = 7) {
     c.gy = gy;
     const cg = new THREE.Group(); cg.position.y = gy; g.add(cg);   // whole cell rides at its terrain height
     const coastal = !isL(gx - 1, gz) || !isL(gx + 1, gz) || !isL(gx, gz - 1) || !isL(gx, gz + 1);
-    if (coastal) { const sand = new THREE.Mesh(sandGeo, sandMat); sand.rotation.x = -Math.PI / 2; sand.position.set(cx, -0.05, cz); sand.receiveShadow = true; cg.add(sand); }
-    const asph = new THREE.Mesh(asphGeo, asphaltMat); asph.rotation.x = -Math.PI / 2; asph.position.set(cx, 0.005, cz); asph.receiveShadow = true; cg.add(asph);
+    if (coastal) g.add(terrainTile(sandMat, cx, cz, B * 1.22, -0.05));
+    g.add(terrainTile(asphaltMat, cx, cz, B, 0.005));
 
     if (bridgeCorridor(cx, cz)) {                       // keep the bridge on-ramp clear — road only, no buildings
-      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; cg.add(lot);
+      g.add(terrainTile(sidewalkMat, cx, cz, B - RO, 0.02));
       continue;
     }
     const lm = lmCell[gx + ',' + gz];
     if (lm) {
-      const lot = new THREE.Mesh(lotGeo, sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; cg.add(lot);
+      g.add(terrainTile(sidewalkMat, cx, cz, B - RO, 0.02));
       const w = B - RO - 2, d = B - RO - 4, h = (lm.type === 'police' || lm.type === 'hospital') ? 12 : 8.5;
       makeShell(cg, buildings, cx, cz, w, d, h, lm.col, gy);
       const s1 = makeSign(lm.label, w * 0.8, lm.sbg, '#fff'); s1.position.set(cx, h * 0.62, cz + d / 2 + 0.06); cg.add(s1);
@@ -137,15 +147,15 @@ export function makeCity(scene, seed = 7) {
 
     const onIslB = inD(cx, cz), ic = onIslB ? D : A;
     const roll = r(), park = roll < 0.13, shop = !park && roll < 0.28;
-    const lot = new THREE.Mesh(lotGeo, park ? parkMat : sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; cg.add(lot);
+    g.add(terrainTile(park ? parkMat : sidewalkMat, cx, cz, B - RO, 0.02));
 
     if (park) {
-      if (r() < 0.55) cg.add(makeHill(cx + (r() - 0.5) * 10, cz + (r() - 0.5) * 10, 8 + r() * 7, 3 + r() * 3));   // grassy hill
-      for (let i = 0; i < 4; i++) cg.add(makeTree(cx + (r() - 0.5) * (B - RO) * 0.7, cz + (r() - 0.5) * (B - RO) * 0.7, r));
+      if (r() < 0.55) { const hx = cx + (r() - 0.5) * 10, hz = cz + (r() - 0.5) * 10; cg.add(conform(makeHill(hx, hz, 8 + r() * 7, 3 + r() * 3), hx, hz, gy)); }   // grassy hill
+      for (let i = 0; i < 4; i++) { const tx = cx + (r() - 0.5) * (B - RO) * 0.7, tz = cz + (r() - 0.5) * (B - RO) * 0.7; cg.add(conform(makeTree(tx, tz, r), tx, tz, gy)); }
       spawns.push({ x: cx, z: cz });
     } else if (shop) {
       const w = (B - RO) * 0.86, d = (B - RO) * 0.86, h = 6 + r() * 3, col = FACADES[(r() * FACADES.length) | 0], awnCol = SHOPCOL[(r() * SHOPCOL.length) | 0];
-      const m = new THREE.Mesh(boxGeo, STD(col)); m.position.set(cx, h / 2, cz); m.scale.set(w, h, d); m.castShadow = true; m.receiveShadow = true; cg.add(m);
+      const m = new THREE.Mesh(boxGeo, STD(col)); m.position.set(cx, h / 2 - SKIRT / 2, cz); m.scale.set(w, h + SKIRT, d); m.castShadow = true; m.receiveShadow = true; cg.add(m);
       const awn = new THREE.Mesh(boxGeo, STD(awnCol, { roughness: 0.6 })); awn.position.set(cx, 2.5, cz + d / 2 + 0.4); awn.scale.set(w * 0.86, 0.4, 1.2); awn.castShadow = true; cg.add(awn);
       const sign = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: awnCol, emissive: awnCol, emissiveIntensity: 0.85, flatShading: true })); sign.position.set(cx, h + 0.7, cz + d / 2 - 0.1); sign.scale.set(w * 0.72, 1.2, 0.3); cg.add(sign);
       buildings.push({ x: cx, z: cz, w, d, h, base: gy }); shops.push({ x: cx, z: cz, color: awnCol });
@@ -155,7 +165,7 @@ export function makeCity(scene, seed = 7) {
       const rot = onIslB ? (r() - 0.5) * 0.9 : 0;        // island B rotated → breaks the grid look
       const place = (ox, oz, w, d) => {
         let h = 7 + Math.pow(r(), 1.7) * (12 + Math.max(0, downtown) * (onIslB ? 80 : 55));
-        const m = new THREE.Mesh(boxGeo, STD(FACADES[(r() * FACADES.length) | 0])); m.position.set(cx + ox, h / 2, cz + oz); m.scale.set(w, h, d); m.rotation.y = rot; m.castShadow = true; m.receiveShadow = true; cg.add(m);
+        const m = new THREE.Mesh(boxGeo, STD(FACADES[(r() * FACADES.length) | 0])); m.position.set(cx + ox, h / 2 - SKIRT / 2, cz + oz); m.scale.set(w, h + SKIRT, d); m.rotation.y = rot; m.castShadow = true; m.receiveShadow = true; cg.add(m);
         const roof = new THREE.Mesh(boxGeo, STD(0x3c3f47)); roof.position.set(cx + ox, h + 0.4, cz + oz); roof.scale.set(w * 0.96, 0.8, d * 0.96); roof.rotation.y = rot; roof.castShadow = true; cg.add(roof);
         if (h > 14) { const band = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x223, emissive: 0x335, emissiveIntensity: 0.5, flatShading: true })); band.position.set(cx + ox, h * 0.6, cz + oz); band.scale.set(w * 0.82, h * 0.5, d * 0.82); band.rotation.y = rot; cg.add(band); }
         const cc = Math.abs(Math.cos(rot)), ss = Math.abs(Math.sin(rot));
@@ -167,10 +177,10 @@ export function makeCity(scene, seed = 7) {
       else { const w = inner * 0.42, d = inner * 0.42; for (const sx of [-1, 1]) for (const sz of [-1, 1]) place(sx * inner * 0.24, sz * inner * 0.24, w, d); }
     }
     if (!park) {
-      if (r() < 0.4) cg.add(makeLamp(cx + (B - RO) / 2 + 2.2, cz - 7));
-      if (r() < 0.22) cg.add(makeHydrant(cx - (B - RO) / 2 - 1.6, cz + 6));
+      if (r() < 0.4) { const lx = cx + (B - RO) / 2 + 2.2, lz = cz - 7; cg.add(conform(makeLamp(lx, lz), lx, lz, gy)); }
+      if (r() < 0.22) { const hx = cx - (B - RO) / 2 - 1.6, hz = cz + 6; cg.add(conform(makeHydrant(hx, hz), hx, hz, gy)); }
     }
-    if (coastal) { for (let i = 0; i < 2; i++) cg.add(makeTree(cx + (r() - 0.5) * B * 0.8, cz + (r() - 0.5) * B * 0.8, r)); if (r() < 0.55) cg.add(makeRock(cx + (r() - 0.5) * B, cz + (r() - 0.5) * B, 0.9 + r() * 1.6, r)); }
+    if (coastal) { for (let i = 0; i < 2; i++) { const tx = cx + (r() - 0.5) * B * 0.8, tz = cz + (r() - 0.5) * B * 0.8; cg.add(conform(makeTree(tx, tz, r), tx, tz, gy)); } if (r() < 0.55) { const rx = cx + (r() - 0.5) * B, rz = cz + (r() - 0.5) * B; cg.add(conform(makeRock(rx, rz, 0.9 + r() * 1.6, r), rx, rz, gy)); } }
   }
   // mountains rising from the sea, off the outer coasts — scenery so the world isn't flat
   for (const M of [{ x: 70, z: 180 }, { x: 140, z: 560 }, { x: 1000, z: 250 }, { x: 990, z: 820 }, { x: 640, z: 970 }, { x: 470, z: 60 }]) {
