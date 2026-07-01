@@ -14,8 +14,8 @@ const FACADES = [0xd98c8c, 0xe0b07e, 0xa9c2d4, 0xc7b3da, 0x9fc7a6, 0xe6d199, 0xc
 // bright shop / awning / neon-sign colours
 const SHOPCOL = [0xe74c3c, 0xf39c12, 0x16a085, 0x2980b9, 0x8e44ad, 0xe84393, 0x00b894, 0xff6b6b];
 
-export const WORLD = { BLOCK: 40, ROAD: 11, GRID: 26 };
-WORLD.SIZE = WORLD.BLOCK * WORLD.GRID;   // 1040 — big enough for two islands + a bridge
+export const WORLD = { BLOCK: 40, ROAD: 11, GRID: 32 };
+WORLD.SIZE = WORLD.BLOCK * WORLD.GRID;   // 1280 — two big islands + a bridge, room to breathe
 const SKIRT = 6;                         // bury building bottoms this far so they never float over sloped terrain
 
 // a readable text sign (unlit canvas texture on a plane)
@@ -52,8 +52,15 @@ export function makeCity(scene, seed = 7) {
   const landmarks = [];
   const B = WORLD.BLOCK, RO = WORLD.ROAD, G = WORLD.GRID, S = WORLD.SIZE;
 
-  // ----- two islands: A (start, smaller) and D (bigger, less gridded) — placed side by side so the bridge is a straight road -----
-  const A = { cx: 250, cz: 360, r: 190 }, D = { cx: 820, cz: 400, r: 315 };
+  // ----- two islands: A (start) and D (bigger) — placed side by side so the bridge is a straight road -----
+  const A = { cx: 340, cz: 470, r: 215 }, D = { cx: 940, cz: 600, r: 330 };
+  // downtown cores: skyscrapers cluster around these; everything else is lower + more spaced (GTA-style districts)
+  const CORES = [
+    { x: A.cx + 35, z: A.cz - 25, r: 145 },
+    { x: D.cx - 70, z: D.cz + 45, r: 190 },
+    { x: D.cx + 120, z: D.cz - 95, r: 165 },
+  ];
+  const downtownAt = (x, z) => { let m = 0; for (const c of CORES) m = Math.max(m, 1 - Math.hypot(x - c.x, z - c.z) / c.r); return Math.max(0, m); };
   const wob = (isl, p1, p2, p3) => a => isl.r * (0.80 + 0.13 * Math.sin(3 * a + p1) + 0.085 * Math.sin(5 * a + p2) + 0.055 * Math.sin(7 * a + p3) + 0.04 * Math.sin(2 * a));
   const wA = wob(A, 0.9, 2.1, 0.4), wD = wob(D, 0.4, 1.7, 2.3);
   const inA = (x, z) => Math.hypot(x - A.cx, z - A.cz) < wA(Math.atan2(z - A.cz, x - A.cx));
@@ -89,6 +96,10 @@ export function makeCity(scene, seed = 7) {
   };
   const conform = (obj, x, zz, gy) => { obj.position.y += groundH(x, zz) - gy; return obj; };   // drop a cell-group child onto the real ground
 
+  // bridge deck height (shared by the deck mesh and by the walk/drive surface) — ramps from each island's terrain, arches over water
+  const BR_yA = groundH(pAx, pAz), BR_yD = groundH(pDx, pDz), BR_ARCH = 3.0;
+  const bridgeDeckY = (x, z) => { const u = Math.max(0, Math.min(1, ((x - pAx) * bux + (z - pAz) * buz) / bridgeLen)); return (BR_yA * (1 - u) + BR_yD * u) + Math.sin(u * Math.PI) * BR_ARCH; };
+
   const ocean = new THREE.Mesh(new THREE.PlaneGeometry(S * 6, S * 6), STD(0x2d7da6, { roughness: 0.25, metalness: 0.4 }));
   ocean.rotation.x = -Math.PI / 2; ocean.position.set(S / 2, -0.9, S / 2); g.add(ocean);
 
@@ -105,18 +116,18 @@ export function makeCity(scene, seed = 7) {
 
   // reserve one land cell for each landmark (nearest to its target)
   const LMDEF = [
-    { type: 'shop', label: 'SHOP', sbg: '#e67e22', col: 0xd98c5a, tx: A.cx, tz: A.cz + A.r * 0.5 },
-    { type: 'school', label: 'SCHOOL', sbg: '#c9a227', col: 0xe6d199, tx: A.cx - A.r * 0.55, tz: A.cz - A.r * 0.1 },
-    { type: 'hospital', label: 'HOSPITAL', sbg: '#c0392b', col: 0xeef2f4, tx: D.cx - D.r * 0.2, tz: D.cz - D.r * 0.55 },
-    { type: 'police', label: 'POLICE', sbg: '#1f2f5c', col: 0x30416e, tx: D.cx + D.r * 0.5, tz: D.cz + D.r * 0.15 },
+    { type: 'shop', label: 'SHOP', sbg: '#e67e22', col: 0xd98c5a, tx: A.cx + A.r * 0.35, tz: A.cz + A.r * 0.5 },
+    { type: 'school', label: 'SCHOOL', sbg: '#c9a227', col: 0xe6d199, tx: A.cx - A.r * 0.55, tz: A.cz - A.r * 0.15 },
+    { type: 'stunt', label: 'STUNT PARK', sbg: '#e07b2a', col: 0xcf5a2a, tx: A.cx - A.r * 0.45, tz: A.cz + A.r * 0.5 },
+    { type: 'hospital', label: 'HOSPITAL', sbg: '#c0392b', col: 0xeef2f4, tx: D.cx - D.r * 0.25, tz: D.cz - D.r * 0.55 },
+    { type: 'police', label: 'POLICE', sbg: '#1f2f5c', col: 0x30416e, tx: D.cx + D.r * 0.5, tz: D.cz + D.r * 0.2 },
   ];
   const lmCell = {};
   for (const lm of LMDEF) { let best = null, bd = 1e9; for (const c of landCells) { if (bridgeCorridor(c.cx, c.cz)) continue; const dd = Math.hypot(c.cx - lm.tx, c.cz - lm.tz); if (dd < bd) { bd = dd; best = c; } } if (best) lmCell[best.gx + ',' + best.gz] = lm; }
 
   for (const c of landCells) {
     const { gx, gz, cx, cz } = c;
-    let gy = groundH(cx, cz);
-    if (bridgeCorridor(cx, cz)) gy = Math.min(gy, 1.2);  // keep the on-ramp low so it meets the flat bridge
+    const gy = groundH(cx, cz);
     c.gy = gy;
     const cg = new THREE.Group(); cg.position.y = gy; g.add(cg);   // whole cell rides at its terrain height
     const coastal = !isL(gx - 1, gz) || !isL(gx + 1, gz) || !isL(gx, gz - 1) || !isL(gx, gz + 1);
@@ -129,6 +140,13 @@ export function makeCity(scene, seed = 7) {
     }
     const lm = lmCell[gx + ',' + gz];
     if (lm) {
+      if (lm.type === 'stunt') {                          // a cleared flat lot for the bike stunt park; ramps are placed by the client
+        g.add(terrainTile(asphaltMat, cx, cz, B, 0.006));
+        const s = makeSign(lm.label, (B - RO) * 0.85, lm.sbg, '#fff'); s.position.set(cx, 4.4, cz); cg.add(s);
+        landmarks.push({ type: 'stunt', label: lm.label, x: cx, z: cz, gy });
+        spawns.push({ x: cx, z: cz });
+        continue;
+      }
       g.add(terrainTile(sidewalkMat, cx, cz, B - RO, 0.02));
       const w = B - RO - 2, d = B - RO - 4, h = (lm.type === 'police' || lm.type === 'hospital') ? 12 : 8.5;
       makeShell(cg, buildings, cx, cz, w, d, h, lm.col, gy);
@@ -145,70 +163,90 @@ export function makeCity(scene, seed = 7) {
       continue;
     }
 
-    const onIslB = inD(cx, cz), ic = onIslB ? D : A;
-    const roll = r(), park = roll < 0.13, shop = !park && roll < 0.28;
+    const onIslB = inD(cx, cz);
+    const dt = downtownAt(cx, cz);                        // 0 = leafy outskirts … 1 = downtown core
+    const roll = r();
+    const parkChance = 0.09 + (1 - dt) * 0.13;            // more greenery the further from downtown
+    const plazaChance = 0.05 + (1 - dt) * 0.12;           // open breathing space so nothing is piled up
+    const park = roll < parkChance;
+    const plaza = !park && roll < parkChance + plazaChance;
+    const shop = !park && !plaza && dt < 0.5 && r() < 0.17;
     g.add(terrainTile(park ? parkMat : sidewalkMat, cx, cz, B - RO, 0.02));
 
     if (park) {
-      if (r() < 0.55) { const hx = cx + (r() - 0.5) * 10, hz = cz + (r() - 0.5) * 10; cg.add(conform(makeHill(hx, hz, 8 + r() * 7, 3 + r() * 3), hx, hz, gy)); }   // grassy hill
-      for (let i = 0; i < 4; i++) { const tx = cx + (r() - 0.5) * (B - RO) * 0.7, tz = cz + (r() - 0.5) * (B - RO) * 0.7; cg.add(conform(makeTree(tx, tz, r), tx, tz, gy)); }
+      if (r() < 0.5) { const hx = cx + (r() - 0.5) * 10, hz = cz + (r() - 0.5) * 10; cg.add(conform(makeHill(hx, hz, 7 + r() * 6, 2.5 + r() * 2.5), hx, hz, gy)); }
+      const nT = 3 + (r() * 4 | 0);
+      for (let i = 0; i < nT; i++) { const tx = cx + (r() - 0.5) * (B - RO) * 0.75, tz = cz + (r() - 0.5) * (B - RO) * 0.75; cg.add(conform(makeTree(tx, tz, r), tx, tz, gy)); }
+      if (r() < 0.5) { const bx = cx + (r() - 0.5) * 8, bz = cz + (r() - 0.5) * 8; cg.add(conform(makeBench(bx, bz), bx, bz, gy)); }
+      spawns.push({ x: cx, z: cz });
+    } else if (plaza) {                                    // open square: a couple trees, otherwise room to move
+      for (let i = 0; i < 2; i++) if (r() < 0.7) { const tx = cx + (r() - 0.5) * (B - RO) * 0.7, tz = cz + (r() - 0.5) * (B - RO) * 0.7; cg.add(conform(makeTree(tx, tz, r), tx, tz, gy)); }
+      if (r() < 0.5) { const bx = cx + (r() - 0.5) * 10, bz = cz + (r() - 0.5) * 10; cg.add(conform(makeBench(bx, bz), bx, bz, gy)); }
       spawns.push({ x: cx, z: cz });
     } else if (shop) {
-      const w = (B - RO) * 0.86, d = (B - RO) * 0.86, h = 6 + r() * 3, col = FACADES[(r() * FACADES.length) | 0], awnCol = SHOPCOL[(r() * SHOPCOL.length) | 0];
+      const w = (B - RO) * 0.8, d = (B - RO) * 0.8, h = 6 + r() * 3, col = FACADES[(r() * FACADES.length) | 0], awnCol = SHOPCOL[(r() * SHOPCOL.length) | 0];
       const m = new THREE.Mesh(boxGeo, STD(col)); m.position.set(cx, h / 2 - SKIRT / 2, cz); m.scale.set(w, h + SKIRT, d); m.castShadow = true; m.receiveShadow = true; cg.add(m);
       const awn = new THREE.Mesh(boxGeo, STD(awnCol, { roughness: 0.6 })); awn.position.set(cx, 2.5, cz + d / 2 + 0.4); awn.scale.set(w * 0.86, 0.4, 1.2); awn.castShadow = true; cg.add(awn);
       const sign = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: awnCol, emissive: awnCol, emissiveIntensity: 0.85, flatShading: true })); sign.position.set(cx, h + 0.7, cz + d / 2 - 0.1); sign.scale.set(w * 0.72, 1.2, 0.3); cg.add(sign);
       buildings.push({ x: cx, z: cz, w, d, h, base: gy }); shops.push({ x: cx, z: cz, color: awnCol });
       spawns.push({ x: cx, z: cz + d / 2 + 4 });
     } else {
-      const downtown = 1 - Math.hypot(cx - ic.cx, cz - ic.cz) / (ic.r * 1.05), inner = (B - RO) * 0.84;
-      const rot = onIslB ? (r() - 0.5) * 0.9 : 0;        // island B rotated → breaks the grid look
+      // buildings: footprint AND height scale with downtown value → towers cluster in the core, low-rise + gaps out in the burbs
+      const inner = (B - RO) * (0.52 + dt * 0.32);
+      const rot = onIslB ? (r() - 0.5) * 0.8 : (r() - 0.5) * 0.25;
       const place = (ox, oz, w, d) => {
-        let h = 7 + Math.pow(r(), 1.7) * (12 + Math.max(0, downtown) * (onIslB ? 80 : 55));
+        const h = 6 + Math.pow(r(), 1.5) * (7 + dt * dt * (onIslB ? 95 : 68));
         const m = new THREE.Mesh(boxGeo, STD(FACADES[(r() * FACADES.length) | 0])); m.position.set(cx + ox, h / 2 - SKIRT / 2, cz + oz); m.scale.set(w, h + SKIRT, d); m.rotation.y = rot; m.castShadow = true; m.receiveShadow = true; cg.add(m);
         const roof = new THREE.Mesh(boxGeo, STD(0x3c3f47)); roof.position.set(cx + ox, h + 0.4, cz + oz); roof.scale.set(w * 0.96, 0.8, d * 0.96); roof.rotation.y = rot; roof.castShadow = true; cg.add(roof);
-        if (h > 14) { const band = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x223, emissive: 0x335, emissiveIntensity: 0.5, flatShading: true })); band.position.set(cx + ox, h * 0.6, cz + oz); band.scale.set(w * 0.82, h * 0.5, d * 0.82); band.rotation.y = rot; cg.add(band); }
+        if (h > 16) { const band = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: 0x223, emissive: 0x335, emissiveIntensity: 0.5, flatShading: true })); band.position.set(cx + ox, h * 0.6, cz + oz); band.scale.set(w * 0.82, h * 0.5, d * 0.82); band.rotation.y = rot; cg.add(band); }
         const cc = Math.abs(Math.cos(rot)), ss = Math.abs(Math.sin(rot));
         buildings.push({ x: cx + ox, z: cz + oz, w: w * cc + d * ss, d: w * ss + d * cc, h: h + 1, base: gy });
       };
-      const style = r();
-      if (style < 0.5) place(0, 0, inner * (0.7 + r() * 0.25), inner * (0.7 + r() * 0.25));
-      else if (style < 0.8) { const w = inner * 0.44; place(-inner * 0.24, 0, w, inner * 0.86); place(inner * 0.24, 0, w, inner * 0.86); }
-      else { const w = inner * 0.42, d = inner * 0.42; for (const sx of [-1, 1]) for (const sz of [-1, 1]) place(sx * inner * 0.24, sz * inner * 0.24, w, d); }
+      if (dt < 0.32) {                                     // residential: a single small house, set back, with a yard tree
+        const w = inner * (0.5 + r() * 0.22);
+        place((r() - 0.5) * 5, (r() - 0.5) * 5, w, w * (0.85 + r() * 0.3));
+        if (r() < 0.6) { const tx = cx + (r() - 0.5) * (B - RO) * 0.7, tz = cz + (B - RO) * 0.3; cg.add(conform(makeTree(tx, tz, r), tx, tz, gy)); }
+      } else {
+        const style = r();
+        if (style < 0.5) place(0, 0, inner * (0.7 + r() * 0.25), inner * (0.7 + r() * 0.25));
+        else if (style < 0.8) { const w = inner * 0.44; place(-inner * 0.24, 0, w, inner * 0.86); place(inner * 0.24, 0, w, inner * 0.86); }
+        else { const w = inner * 0.42, d = inner * 0.42; for (const sx of [-1, 1]) for (const sz of [-1, 1]) place(sx * inner * 0.24, sz * inner * 0.24, w, d); }
+      }
     }
-    if (!park) {
-      if (r() < 0.4) { const lx = cx + (B - RO) / 2 + 2.2, lz = cz - 7; cg.add(conform(makeLamp(lx, lz), lx, lz, gy)); }
-      if (r() < 0.22) { const hx = cx - (B - RO) / 2 - 1.6, hz = cz + 6; cg.add(conform(makeHydrant(hx, hz), hx, hz, gy)); }
+    if (!park && !plaza) {
+      if (r() < 0.35) { const lx = cx + (B - RO) / 2 + 2.2, lz = cz - 7; cg.add(conform(makeLamp(lx, lz), lx, lz, gy)); }
+      if (r() < 0.2) { const hx = cx - (B - RO) / 2 - 1.6, hz = cz + 6; cg.add(conform(makeHydrant(hx, hz), hx, hz, gy)); }
     }
     if (coastal) { for (let i = 0; i < 2; i++) { const tx = cx + (r() - 0.5) * B * 0.8, tz = cz + (r() - 0.5) * B * 0.8; cg.add(conform(makeTree(tx, tz, r), tx, tz, gy)); } if (r() < 0.55) { const rx = cx + (r() - 0.5) * B, rz = cz + (r() - 0.5) * B; cg.add(conform(makeRock(rx, rz, 0.9 + r() * 1.6, r), rx, rz, gy)); } }
   }
   // mountains rising from the sea, off the outer coasts — scenery so the world isn't flat
-  for (const M of [{ x: 70, z: 180 }, { x: 140, z: 560 }, { x: 1000, z: 250 }, { x: 990, z: 820 }, { x: 640, z: 970 }, { x: 470, z: 60 }]) {
-    if (!isLand(M.x, M.z)) g.add(makeMountain(M.x, M.z, 40 + r() * 30, 60 + r() * 50));
+  for (const M of [{ x: 90, z: 170 }, { x: 150, z: 980 }, { x: 1190, z: 230 }, { x: 1200, z: 1060 }, { x: 660, z: 1190 }, { x: 430, z: 80 }, { x: 90, z: 660 }, { x: 1160, z: 900 }]) {
+    if (!isLand(M.x, M.z)) g.add(makeMountain(M.x, M.z, 45 + r() * 35, 60 + r() * 60));
   }
 
   for (let gx = 1; gx < G; gx++) for (let gz = 0; gz < G; gz++) if (land[gx - 1][gz] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const zz = gz * B + B / 2 + t + 2, a = new THREE.Mesh(boxGeo, lineMat); a.position.set(gx * B, groundH(gx * B, zz) + 0.05, zz); a.scale.set(0.4, 0.02, 3); g.add(a); }
   for (let gz = 1; gz < G; gz++) for (let gx = 0; gx < G; gx++) if (land[gx][gz - 1] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const xx = gx * B + B / 2 + t + 2, b = new THREE.Mesh(boxGeo, lineMat); b.position.set(xx, groundH(xx, gz * B) + 0.05, gz * B); b.scale.set(3, 0.02, 0.4); g.add(b); }
 
-  // ----- bridge deck, railings, towers, cables -----
+  // ----- bridge deck (ramps up from each island's terrain, arches over the water) -----
   (function bridge() {
     const deckMat = STD(0x3a3d44, { roughness: 1 }), railMat = STD(0x9aa0a6), towerMat = STD(0xb23a3a, { roughness: 0.6 });
-    const seg = 8, n = Math.ceil(bridgeLen / seg);
+    const deckY = u => bridgeDeckY(pAx + bux * u * bridgeLen, pAz + buz * u * bridgeLen);
+    const seg = 8, over = 5, n = Math.ceil((bridgeLen + over * 2) / seg);
     for (let i = 0; i < n; i++) {
-      const t = Math.min(bridgeLen, (i + 0.5) * seg), x = pAx + bux * t, z = pAz + buz * t;
-      const deck = new THREE.Mesh(boxGeo, deckMat); deck.position.set(x, 0.06, z); deck.scale.set(HALF * 2, 0.3, seg + 0.5); deck.rotation.y = bheading; deck.receiveShadow = true; g.add(deck);
-      if (i % 2 === 0) { const dash = new THREE.Mesh(boxGeo, lineMat); dash.position.set(x, 0.22, z); dash.scale.set(0.4, 0.02, 3); dash.rotation.y = bheading; g.add(dash); }
-      for (const sd of [-1, 1]) { const rail = new THREE.Mesh(boxGeo, railMat); rail.position.set(x + perpx * HALF * sd, 0.6, z + perpz * HALF * sd); rail.scale.set(0.3, 1.1, seg + 0.5); rail.rotation.y = bheading; g.add(rail); }
+      const t = -over + (i + 0.5) * seg, u = t / bridgeLen, x = pAx + bux * t, z = pAz + buz * t, y = deckY(u) + 0.06;
+      const deck = new THREE.Mesh(boxGeo, deckMat); deck.position.set(x, y, z); deck.scale.set(HALF * 2, 0.35, seg + 0.5); deck.rotation.y = bheading; deck.receiveShadow = true; g.add(deck);
+      if (i % 2 === 0) { const dash = new THREE.Mesh(boxGeo, lineMat); dash.position.set(x, y + 0.18, z); dash.scale.set(0.4, 0.02, 3); dash.rotation.y = bheading; g.add(dash); }
+      for (const sd of [-1, 1]) { const rail = new THREE.Mesh(boxGeo, railMat); rail.position.set(x + perpx * HALF * sd, y + 0.55, z + perpz * HALF * sd); rail.scale.set(0.3, 1.1, seg + 0.5); rail.rotation.y = bheading; g.add(rail); }
     }
     for (const tt of [0.3, 0.7]) {
-      const t = bridgeLen * tt, x = pAx + bux * t, z = pAz + buz * t;
+      const t = bridgeLen * tt, x = pAx + bux * t, z = pAz + buz * t, by = deckY(tt);
       for (const sd of [-1, 1]) {
         const tx = x + perpx * HALF * sd, tz = z + perpz * HALF * sd;
-        const tower = new THREE.Mesh(boxGeo, towerMat); tower.position.set(tx, 11, tz); tower.scale.set(1.3, 22, 1.3); tower.castShadow = true; g.add(tower);
-        const cross = new THREE.Mesh(boxGeo, towerMat); cross.position.set(tx, 20, tz); cross.scale.set(1.1, 1.4, 1.1); g.add(cross);
-        for (const end of [0, bridgeLen]) {
-          const ex = pAx + bux * end + perpx * HALF * sd, ez = pAz + buz * end + perpz * HALF * sd;
-          g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(tx, 21, tz), new THREE.Vector3(ex, 0.7, ez)]), new THREE.LineBasicMaterial({ color: 0x2a2d33 })));
+        const tower = new THREE.Mesh(boxGeo, towerMat); tower.position.set(tx, by + 11, tz); tower.scale.set(1.3, 22, 1.3); tower.castShadow = true; g.add(tower);
+        const cross = new THREE.Mesh(boxGeo, towerMat); cross.position.set(tx, by + 20, tz); cross.scale.set(1.1, 1.4, 1.1); g.add(cross);
+        for (const eu of [0, 1]) {
+          const et = eu * bridgeLen, ex = pAx + bux * et + perpx * HALF * sd, ez = pAz + buz * et + perpz * HALF * sd;
+          g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(tx, by + 21, tz), new THREE.Vector3(ex, deckY(eu) + 0.7, ez)]), new THREE.LineBasicMaterial({ color: 0x2a2d33 })));
         }
       }
     }
@@ -218,7 +256,7 @@ export function makeCity(scene, seed = 7) {
   if (!spawns.length) spawns.push({ x: A.cx, z: A.cz });
   scene.add(g);
   // ground height for gameplay: terrain on land, but flat (0) on the bridge deck so vehicles sit on it
-  const groundAt = (x, z) => (onBridge(x, z) && !isLand(x, z)) ? 0 : groundH(x, z);
+  const groundAt = (x, z) => (onBridge(x, z) && !isLand(x, z)) ? bridgeDeckY(x, z) + 0.2 : groundH(x, z);
   return { group: g, buildings, spawns, shops, landmarks, isLand, isLandCell, groundH: groundAt, land, landCells, islands: { A, D }, bridge: { ax: pAx, az: pAz, bx: pDx, bz: pDz } };
 }
 
@@ -405,27 +443,19 @@ export const HAIR = [0x20140d, 0x4a2f1a, 0x8a6b2a, 0xc9a23a, 0xb0b0b0, 0x222222,
 // shirt = main shirt colour. opts: { skin, hair, pants, hat } (any may be omitted)
 export function makeChar(shirt = 0x3aa0ff, opts = {}) {
   const g = new THREE.Group();
-  const preset = opts.preset, fox = preset === 'fox', marina = preset === 'marina';
-  const fem = fox ? false : (marina || opts.gender === 'f');
-  if (fox) shirt = 0xdf6b2e; else if (marina) shirt = 0x2a2f3a;
-  const skin = fox ? 0xdf6b2e : marina ? 0xe6c6a4 : (opts.skin != null ? opts.skin : SKIN[(Math.random() * SKIN.length) | 0]);
-  const pants = fox ? 0xc85a24 : marina ? 0x1e2129 : (opts.pants != null ? opts.pants : 0x2c3e50);
-  const hairCol = fox ? 0x8a3f16 : marina ? 0x4a2f1a : (opts.hair != null ? opts.hair : 0x20140d);
+  const preset = opts.preset, fox = preset === 'fox';
+  const fem = fox ? false : (opts.gender === 'f');
+  if (fox) shirt = 0xdf6b2e;
+  const skin = fox ? 0xdf6b2e : (opts.skin != null ? opts.skin : SKIN[(Math.random() * SKIN.length) | 0]);
+  const pants = fox ? 0xc85a24 : (opts.pants != null ? opts.pants : 0x2c3e50);
+  const hairCol = fox ? 0x8a3f16 : (opts.hair != null ? opts.hair : 0x20140d);
   const limb = (w, h, d, c) => { const grp = new THREE.Group(); const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), STD(c)); m.position.y = -h / 2; m.castShadow = true; grp.add(m); return grp; };
   const shW = fem ? 0.46 : 0.55, hipW = fem ? 0.52 : 0.5, armW = fem ? 0.13 : 0.15, legW = fem ? 0.17 : 0.19, armX = fem ? 0.31 : 0.36;
   const torso = new THREE.Mesh(new THREE.BoxGeometry(shW, 0.75, 0.30), STD(shirt)); torso.position.y = 1.15; torso.castShadow = true; g.add(torso);
   if (fem) { const chest = new THREE.Mesh(new THREE.BoxGeometry(shW * 0.82, 0.17, 0.16), STD(shirt)); chest.position.set(0, 1.19, 0.17); g.add(chest); }
   if (fox) { const belly = new THREE.Mesh(new THREE.BoxGeometry(shW * 0.6, 0.55, 0.06), STD(0xf6ece0)); belly.position.set(0, 1.12, 0.16); g.add(belly); }
   const hips = new THREE.Mesh(new THREE.BoxGeometry(hipW, 0.28, 0.32), STD(pants)); hips.position.y = 0.74; g.add(hips);
-  let head;
-  if (marina) {                                          // photo face on the front (+z) of a slightly larger head
-    const sk = STD(skin);
-    const faceMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.92, metalness: 0 });
-    new THREE.TextureLoader().load('/marina.jpg', t => { t.colorSpace = THREE.SRGBColorSpace; faceMat.map = t; faceMat.color.set(0xffffff); faceMat.needsUpdate = true; });
-    head = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.32), [sk, sk, sk, sk, faceMat, sk]);
-  } else {
-    head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.32), STD(skin));
-  }
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.32), STD(skin));
   head.position.y = 1.72; head.castShadow = true; g.add(head);
   if (fox) {
     for (const sx of [-1, 1]) {
@@ -436,14 +466,6 @@ export function makeChar(shirt = 0x3aa0ff, opts = {}) {
     const nose = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.08, 0.08), STD(0x1a1210)); nose.position.set(0, 1.69, 0.28); g.add(nose);
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.95, 6), STD(0xdf6b2e)); tail.position.set(0, 0.82, -0.42); tail.rotation.x = -2.35; tail.castShadow = true; g.add(tail);
     const ttip = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.3, 6), STD(0xf6ece0)); ttip.position.set(0, 0.5, -0.78); ttip.rotation.x = -2.35; g.add(ttip);
-  } else if (marina) {                                   // voluminous greying wavy hair framing the photo face
-    const hcol = 0x968b7d;
-    const crown = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.24, 0.44), STD(hcol)); crown.position.set(0, 1.99, -0.03); crown.castShadow = true; g.add(crown);
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.44, 0.18), STD(hcol)); back.position.set(0, 1.72, -0.2); back.castShadow = true; g.add(back);
-    for (const sx of [-1, 1]) {
-      const side = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.46, 0.4), STD(hcol)); side.position.set(sx * 0.23, 1.68, -0.04); side.castShadow = true; g.add(side);
-      const wave = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.14), STD(hcol)); wave.position.set(sx * 0.2, 1.45, 0.06); g.add(wave);
-    }
   } else if (opts.hat) {
     const crown = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.18, 0.4), STD(hairCol)); crown.position.y = 1.96; crown.castShadow = true; g.add(crown);
     const brim = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.26), STD(hairCol)); brim.position.set(0, 1.9, 0.3); g.add(brim);

@@ -224,7 +224,7 @@ const EMOTES = [
 const EMOTE_DUR = 3.2;
 const me = {
   id: null, name: 'Player', colorHex: 0x3aa0ff,
-  pos: new THREE.Vector3(250, 0, 370), heading: 0, vy: 0, onGround: true,
+  pos: new THREE.Vector3(340, 0, 470), heading: 0, vy: 0, onGround: true,
   hp: 100, alive: true, kills: 0, inCar: null, aiming: false, walkT: 0, shootCd: 0, fp: false,
   weapon: 'pistol', ammo: { pistol: Infinity, smg: 0, shotgun: 0, rifle: 0, sniper: 0, rpg: 0, homing: 0 },
   wanted: 0, heat: 0, lastCrime: 0, lockTarget: null, lockT: 0, locked: false, emote: null, emoteT0: 0, chute: null,
@@ -1561,21 +1561,11 @@ function makeRamp(x, z, heading) {
   bikeRamps.push({ x, z, r: 4.2, power: 16 });
 }
 function buildTrickZone() {
-  const A = city.islands.A, R = 15;
-  const open = (x, z) => city.isLandCell(x, z) && !insideBuilding(x, z);
-  // scan island A for the most open 5-point cluster (center + 4 ramp spots) so the whole park fits in the clear
-  let best = { x: A.cx, z: A.cz }, bestScore = -1;
-  for (let ax = A.cx - A.r * 0.75; ax <= A.cx + A.r * 0.75; ax += 20)
-    for (let az = A.cz - A.r * 0.75; az <= A.cz + A.r * 0.75; az += 20) {
-      if (!open(ax, az)) continue;
-      let s = 0; for (const [dx, dz] of [[0, 0], [0, -R], [0, R], [-R, 0], [R, 0]]) if (open(ax + dx, az + dz)) s++;
-      if (s > bestScore) { bestScore = s; best = { x: ax, z: az }; }
-    }
-  const cx = best.x, cz = best.z;
-  for (const [rx, rz, h] of [[cx, cz - R, 0], [cx, cz + R, Math.PI], [cx - R, cz, Math.PI / 2], [cx + R, cz, -Math.PI / 2]])
-    if (open(rx, rz)) makeRamp(rx, rz, h);
-  if (open(cx, cz)) makeJumpPad(cx, cz);
-  const sign = makeTag('🏍 STUNT PARK', '#ffcf3c'); sign.scale.set(9, 2.3, 1); sign.position.set(cx, city.groundH(cx, cz) + 6.5, cz); scene.add(sign);
+  const lm = city.landmarks.find(l => l.type === 'stunt');   // a cleared lot reserved by the world generator
+  if (!lm) return null;
+  const cx = lm.x, cz = lm.z, R = 13;
+  for (const [dx, dz, h] of [[0, -R, 0], [0, R, Math.PI], [-R, 0, Math.PI / 2], [R, 0, -Math.PI / 2]]) makeRamp(cx + dx, cz + dz, h);   // 4 kickers facing the middle
+  makeJumpPad(cx, cz);
   return { x: cx, z: cz };
 }
 let trickZone = null;

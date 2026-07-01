@@ -24,8 +24,8 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 const players = new Map();
 let NID = 1;
-const SPAWNS = [];   // on the start island A (centred ~250,360 in the 1040 world)
-for (let i = 0; i < 24; i++) SPAWNS.push({ x: 195 + (i % 6) * 22, y: 320 + ((i / 6) | 0) * 22 });
+const SPAWNS = [];   // on the start island A (centred ~340,470 in the 1280 world), away from the downtown core
+for (let i = 0; i < 24; i++) SPAWNS.push({ x: 310 + (i % 6) * 18, y: 510 + ((i / 6) | 0) * 16 });
 const spawn = () => SPAWNS[(Math.random() * SPAWNS.length) | 0];
 
 function send(p, o) { try { p.ws.send(JSON.stringify(o)); } catch {} }
@@ -100,7 +100,7 @@ wss.on('connection', (ws) => {
   ws.on('error', () => { players.delete(id); bcast({ t: 'leave', id }); });
 });
 
-function sanitizeLook(l) { const hx = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d; l = l || {}; return { shirt: hx(l.shirt, '#3aa0ff'), skin: hx(l.skin, '#e0ac69'), hair: hx(l.hair, '#20140d'), pants: hx(l.pants, '#2c3e50'), hat: !!l.hat, gender: l.gender === 'f' ? 'f' : 'm', preset: (l.preset === 'fox' || l.preset === 'marina') ? l.preset : '' }; }
+function sanitizeLook(l) { const hx = (v, d) => /^#[0-9a-f]{6}$/i.test(v) ? v : d; l = l || {}; return { shirt: hx(l.shirt, '#3aa0ff'), skin: hx(l.skin, '#e0ac69'), hair: hx(l.hair, '#20140d'), pants: hx(l.pants, '#2c3e50'), hat: !!l.hat, gender: l.gender === 'f' ? 'f' : 'm', preset: (l.preset === 'fox') ? l.preset : '' }; }
 function ent(p) { return { id: p.id, name: p.name, color: p.color, look: p.look, x: p.x, y: p.y, a: p.a, car: p.car, vt: p.vt, vy: p.vy, tu: p.tu, wi: p.wi, em: p.em, vx: p.vx, vz: p.vz, cc: p.cc, hp: p.hp, alive: p.alive, kills: p.kills }; }
 
 // 20 Hz snapshot — only joined players exist in the world
