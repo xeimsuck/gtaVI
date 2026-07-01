@@ -93,9 +93,10 @@ export function makeCity(scene, seed = 7) {
   for (let gx = 1; gx < G; gx++) for (let gz = 0; gz < G; gz++) if (land[gx - 1][gz] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const a = new THREE.Mesh(boxGeo, lineMat); a.position.set(gx * B, 0.04, gz * B + B / 2 + t + 2); a.scale.set(0.4, 0.02, 3); g.add(a); }
   for (let gz = 1; gz < G; gz++) for (let gx = 0; gx < G; gx++) if (land[gx][gz - 1] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const b = new THREE.Mesh(boxGeo, lineMat); b.position.set(gx * B + B / 2 + t + 2, 0.04, gz * B); b.scale.set(3, 0.02, 0.4); g.add(b); }
 
+  const isLandCell = (x, z) => { const gx = Math.floor(x / B), gz = Math.floor(z / B); return gx >= 0 && gz >= 0 && gx < G && gz < G && land[gx][gz]; };
   if (!spawns.length) spawns.push({ x: C, z: C });
   scene.add(g);
-  return { group: g, buildings, spawns, shops, isLand, land, landCells };
+  return { group: g, buildings, spawns, shops, isLand, isLandCell, land, landCells };
 }
 
 function makeLamp(x, z) {
@@ -202,6 +203,18 @@ export function makeRocket() {
   return g;
 }
 
+// ---------- boat ----------
+export function makeBoat(color = 0xe8e8e8) {
+  const g = new THREE.Group();
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.55, 3.6), STD(color, { roughness: 0.5 })); hull.position.y = 0.35; hull.castShadow = true; g.add(hull);
+  const bow = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.55, 1.1), STD(color)); bow.position.set(0, 0.46, 2.1); bow.rotation.x = -0.36; bow.castShadow = true; g.add(bow);
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.15, 2.4), STD(0x9a7a55)); deck.position.set(0, 0.62, -0.2); g.add(deck);
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.5), STD(0x2a2a2a)); seat.position.set(0, 0.78, -1.0); g.add(seat);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.8), STD(0x2a3550, { roughness: 0.3, metalness: 0.3 })); cabin.position.set(0, 1.05, -0.9); cabin.castShadow = true; g.add(cabin);
+  const wind = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.42, 0.08), STD(0x16242e, { metalness: 0.4 })); wind.position.set(0, 1.12, -0.5); wind.rotation.x = -0.3; g.add(wind);
+  return { group: g, wheels: [] };
+}
+
 // ---------- tank ----------
 export function makeTank(color = 0x5a6b3a) {
   const g = new THREE.Group();
@@ -220,6 +233,22 @@ export function makeTank(color = 0x5a6b3a) {
   const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.16, 10), STD(0x3a4a2a)); hatch.position.set(0, 0.42, -0.5); turret.add(hatch);
   turret.position.set(0, 1.9, -0.2); g.add(turret);
   return { group: g, turret, barrel, wheels };
+}
+
+// ---------- held weapon models (barrel points +z) ----------
+export function makeWeaponMesh(kind) {
+  if (!kind || kind === 'fists') return null;
+  const g = new THREE.Group();
+  const metal = STD(0x24272e, { roughness: 0.5, metalness: 0.4 }), wood = STD(0x5a3a22, { roughness: 0.85 });
+  const add = (w, h, d, z, y = 0, m = metal) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(0, y, z); g.add(b); return b; };
+  if (kind === 'pistol') { add(0.08, 0.13, 0.26, 0.06); add(0.07, 0.15, 0.1, -0.04, -0.11); }
+  else if (kind === 'smg') { add(0.09, 0.14, 0.5, 0.12); add(0.07, 0.16, 0.1, -0.02, -0.11); add(0.06, 0.12, 0.16, -0.02, -0.2); }
+  else if (kind === 'shotgun') { add(0.09, 0.12, 0.66, 0.2); add(0.08, 0.13, 0.28, -0.16, -0.02, wood); }
+  else if (kind === 'rifle') { add(0.08, 0.12, 0.7, 0.2); add(0.07, 0.15, 0.1, -0.05, -0.11); add(0.06, 0.1, 0.24, -0.2, -0.02, wood); }
+  else if (kind === 'sniper') { add(0.08, 0.12, 0.86, 0.26); add(0.07, 0.15, 0.1, -0.05, -0.11); const s = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.24, 8), metal); s.rotation.x = Math.PI / 2; s.position.set(0, 0.12, 0.16); g.add(s); }
+  else if (kind === 'rpg' || kind === 'homing') { const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 0.95, 10), metal); tube.rotation.x = Math.PI / 2; tube.position.z = 0.35; g.add(tube); if (kind === 'homing') { const fin = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.05, 0.16), metal); fin.position.set(0, 0.1, 0.75); g.add(fin); } }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
 }
 
 // ---------- character ----------
@@ -250,8 +279,10 @@ export function makeChar(shirt = 0x3aa0ff, opts = {}) {
   const armR = limb(armW, 0.66, armW, shirt); armR.position.set(armX, 1.5, 0); g.add(armR);
   const legL = limb(legW, 0.74, 0.2, pants); legL.position.set(-0.13, 0.74, 0); g.add(legL);
   const legR = limb(legW, 0.74, 0.2, pants); legR.position.set(0.13, 0.74, 0); g.add(legR);
+  const heldMount = new THREE.Group(); heldMount.position.set(0.30, 1.32, 0.24); g.add(heldMount);   // right-hand weapon
   return {
     group: g, parts: { armL, armR, legL, legR },
+    setWeapon(kind) { while (heldMount.children.length) heldMount.remove(heldMount.children[0]); const m = makeWeaponMesh(kind); if (m) heldMount.add(m); },
     setPose(t, moving, aiming) {
       const s = moving ? Math.sin(t * 9) * 0.8 : 0;
       legL.rotation.x = s; legR.rotation.x = -s;
