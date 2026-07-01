@@ -3,7 +3,7 @@
 //  Drive, shoot, mess around with friends. Browser + WebSocket relay.
 // =====================================================================
 import * as THREE from 'three';
-import { makeCity, makeCar, makeChar, makeBike, makeHeli, makeRocket, makeTank, makeBoat, makeWeaponMesh, WORLD } from './build.js';
+import { makeCity, makeCar, makeChar, makeBike, makeHeli, makeRocket, makeTank, makeBoat, makeWeaponMesh, makeParachute, makeHill, makeRock, makeMountain, WORLD } from './build.js';
 
 // ---------- renderer / scene ----------
 const canvas = document.getElementById('gl');
@@ -34,6 +34,28 @@ scene.add(new THREE.AmbientLight(0xaab4c4, 0.55));
 // ---------- world ----------
 const city = makeCity(scene, 7);
 const buildings = city.buildings;
+
+// ---------- animated water (GPU wave shader) ----------
+let waterUniforms = null;
+(function makeWater() {
+  const geo = new THREE.PlaneGeometry(2800, 2800, 220, 220); geo.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2b74a3, roughness: 0.14, metalness: 0.55, transparent: true, opacity: 0.9 });
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uTime = { value: 0 }; waterUniforms = sh.uniforms;
+    sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader
+      .replace('#include <beginnormal_vertex>', `
+        float dydx = cos(position.x*0.05 + uTime*1.3)*0.0175 + cos((position.x+position.z)*0.028 + uTime*0.8)*0.007;
+        float dydz = cos(position.z*0.045 + uTime*1.1)*0.01575 + cos((position.x+position.z)*0.028 + uTime*0.8)*0.007;
+        vec3 objectNormal = normalize(vec3(-dydx, 1.0, -dydz));
+      `)
+      .replace('#include <begin_vertex>', `
+        vec3 transformed = vec3(position);
+        transformed.y += sin(position.x*0.05 + uTime*1.3)*0.35 + sin(position.z*0.045 + uTime*1.1)*0.35 + sin((position.x+position.z)*0.028 + uTime*0.8)*0.25;
+      `);
+  };
+  const m = new THREE.Mesh(geo, mat); m.position.set(WORLD.SIZE / 2, -0.32, WORLD.SIZE / 2); m.renderOrder = 1; scene.add(m);
+})();
+
 function resolve(x, z, r) {
   for (const b of buildings) {
     const hw = b.w / 2 + r, hd = b.d / 2 + r, dx = x - b.x, dz = z - b.z;
@@ -46,6 +68,29 @@ function resolve(x, z, r) {
 }
 // walkable on foot = a road/lot cell OR its beach ring (sand extends a few metres past the cell)
 function onLandOrBeach(x, z) { return city.isLandCell(x, z) || city.isLandCell(x + 7, z) || city.isLandCell(x - 7, z) || city.isLandCell(x, z + 7) || city.isLandCell(x, z - 7); }
+// on-foot building collision that respects roof height: blocks you at ground/wall level, but lets you WALK on rooftops
+function resolveFoot(x, z, y, r) {
+  for (const b of buildings) {
+    if (y >= (b.h || 60) - 0.3) continue;              // at/above the roof — no wall push (walk on top)
+    const hw = b.w / 2 + r, hd = b.d / 2 + r, dx = x - b.x, dz = z - b.z;
+    if (Math.abs(dx) < hw && Math.abs(dz) < hd) { const ox = hw - Math.abs(dx), oz = hd - Math.abs(dz); if (ox < oz) x += dx < 0 ? -ox : ox; else z += dz < 0 ? -oz : oz; }
+  }
+  return [x, z];
+}
+// the surface height under the player (a rooftop if they're descending onto one, else ground)
+function supportHeight(x, z, y) {
+  let s = 0;
+  for (const b of buildings) { const roof = b.h || 60; if (y >= roof - 0.6 && Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2) s = Math.max(s, roof); }
+  return s;
+}
+// ---------- parachute ----------
+function deployChute() { if (me.chute) return; me.chute = makeParachute(); scene.add(me.chute); }
+function closeChute() { if (me.chute) { scene.remove(me.chute); me.chute = null; } }
+function updateParachute(dt) {
+  if (me.inCar || !me.alive) { closeChute(); return; }
+  if (!me.chute && !me.onGround && me.pos.y > 5 && me.vy < 0 && keys.has('Space')) { deployChute(); }
+  if (me.chute) { me.chute.position.set(me.pos.x, me.pos.y + 2.7, me.pos.z); me.chute.rotation.y = me.heading; }
+}
 // 3D box collision for aircraft: solid only up to each building's roof. Pushes UP onto the roof (so you can land)
 // when near the top, or sideways when near a wall. Above the roof there's no collision → fly over freely.
 function resolveHeli(x, z, y, r) {
@@ -170,7 +215,7 @@ const me = {
   pos: new THREE.Vector3(250, 0, 370), heading: 0, vy: 0, onGround: true,
   hp: 100, alive: true, kills: 0, inCar: null, aiming: false, walkT: 0, shootCd: 0, fp: false,
   weapon: 'pistol', ammo: { pistol: Infinity, smg: 0, shotgun: 0, rifle: 0, sniper: 0, rpg: 0, homing: 0 },
-  wanted: 0, heat: 0, lastCrime: 0, lockTarget: null, lockT: 0, locked: false, emote: null, emoteT0: 0,
+  wanted: 0, heat: 0, lastCrime: 0, lockTarget: null, lockT: 0, locked: false, emote: null, emoteT0: 0, chute: null,
   look: { shirt: '#3aa0ff', skin: '#e0ac69', hair: '#20140d', pants: '#2c3e50', hat: false, gender: 'm' },
   char: null,
 };
@@ -194,7 +239,7 @@ function saveSettings() { try { localStorage.setItem('viceSettings', JSON.string
 let scoped = false;
 camera.fov = settings.fov; camera.updateProjectionMatrix();
 
-function spawnMe(x, z) { me.pos.set(x, 0, z); me.alive = true; me.hp = 100; me.wanted = 0; me.heat = 0; me.lastCrime = 0; if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = true; camPivot = null; }
+function spawnMe(x, z) { me.pos.set(x, 0, z); me.alive = true; me.hp = 100; me.wanted = 0; me.heat = 0; me.lastCrime = 0; closeChute(); if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = true; camPivot = null; }
 
 let fDown = false, vDown = false, mDown = false, mapOpen = false;
 function toggleCar() {
@@ -375,7 +420,7 @@ function updatePlayer(dt) {
 
   me.aiming = false;
   if (me.inCar) {
-    me.emote = null;
+    me.emote = null; if (me.chute) closeChute();
     const v = me.inCar;
     if (v.type === 'heli') {
       driveHeli(v, dt);
@@ -405,15 +450,19 @@ function updatePlayer(dt) {
     me.aiming = mouse.down && !swimming;               // no shooting while swimming
     const spd = swimming ? 4.2 : (keys.has('ShiftLeft') && !me.aiming ? 9 : 5) * (me.turbo ? 2.2 : 1);
     me.pos.addScaledVector(md, spd * dt);
-    if (!swimming) {                                   // land/beach: jump + gravity, normal speed
-      if (me.onGround && keys.has('Space')) { me.vy = 8; me.onGround = false; }
-      me.vy -= 24 * dt; me.pos.y += me.vy * dt; if (me.pos.y <= 0) { me.pos.y = 0; me.vy = 0; me.onGround = true; }
+    if (!swimming) {                                   // land/beach: jump + gravity, land on ground OR rooftops
+      updateParachute(dt);
+      const support = supportHeight(me.pos.x, me.pos.z, me.pos.y);
+      if (me.onGround && keys.has('Space') && !me.chute) { me.vy = 8; me.onGround = false; }
+      const gACC = me.chute ? 3 : 24;
+      me.vy -= gACC * dt; if (me.chute) me.vy = Math.max(me.vy, -3.5);   // parachute: slow descent
+      me.pos.y += me.vy * dt; if (me.pos.y <= support) { me.pos.y = support; me.vy = 0; me.onGround = true; if (me.chute) closeChute(); }
     } else {                                            // deep water: swim (submerged, no jump), splash
-      me.vy = 0; me.onGround = false;
+      me.vy = 0; me.onGround = false; if (me.chute) closeChute();
       me.pos.y = THREE.MathUtils.lerp(me.pos.y, -0.95 + Math.sin(performance.now() / 320) * 0.07, Math.min(1, dt * 6));
       if (moving && Math.random() < 0.35) addSpark(new THREE.Vector3(me.pos.x, -0.5, me.pos.z), 0xcfeeff, 1, 2.5);
     }
-    const [rx, rz] = resolve(me.pos.x, me.pos.z, 0.5); me.pos.x = rx; me.pos.z = rz;
+    const [rx, rz] = resolveFoot(me.pos.x, me.pos.z, me.pos.y, 0.5); me.pos.x = rx; me.pos.z = rz;
     me.pos.x = THREE.MathUtils.clamp(me.pos.x, 2, WORLD.SIZE - 2); me.pos.z = THREE.MathUtils.clamp(me.pos.z, 2, WORLD.SIZE - 2);
     if (me.aiming) me.heading = camYaw; else if (moving) me.heading = Math.atan2(md.x, md.z);
     me.char.group.position.copy(me.pos); me.char.group.visible = me.alive && !me.fp;
@@ -997,7 +1046,7 @@ function onMsg(m) {
     case 'shot': peerShot(m); break;
     case 'rocket': { const o = new THREE.Vector3(m.x, m.y, m.z), d = new THREE.Vector3(m.dx, m.dy, m.dz); if (d.lengthSq() > 0.0001) spawnRocket(o, d, { speed: m.speed || 58, big: !!m.big, ghost: true }); break; }
     case 'hp': me.hp = m.hp; flash(); shake = Math.max(shake, 0.25); break;
-    case 'dead': if (m.id === me.id) { me.alive = false; if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = false; me.wanted = 0; me.heat = 0; me.lastCrime = 0; $('dead').classList.add('show'); } break;
+    case 'dead': if (m.id === me.id) { me.alive = false; closeChute(); if (me.inCar) { me.inCar.occupant = null; me.inCar = null; } me.char.group.visible = false; me.wanted = 0; me.heat = 0; me.lastCrime = 0; $('dead').classList.add('show'); } break;
     case 'resp': spawnMe(m.x, m.y); $('dead').classList.remove('show'); break;
     case 'kill': notice(`${m.killer} 💀 ${m.victim}`); break;
     case 'kills': me.kills = m.n; break;
@@ -1266,6 +1315,7 @@ function renderPreview(dt) {                            // rotating live charact
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, clock.getDelta());
+  if (waterUniforms) waterUniforms.uTime.value += dt;
   if (playing) { updatePlayer(dt); updatePeds(dt); updateTraffic(dt); updateCops(dt); updateFootCops(dt); updateStationCops(dt); updateSchoolKids(dt); updatePickups(dt); updateBarrels(); updateWanted(dt); updateRemotes(dt); updateRockets(dt); updateFx(dt); netTick(dt); updateHud(); if (mapOpen) drawMap(); else drawMinimap(); }
   else { menuA += dt * 0.1; camera.position.set(WORLD.SIZE / 2 + Math.cos(menuA) * 90, 70, WORLD.SIZE / 2 + Math.sin(menuA) * 90); camera.lookAt(WORLD.SIZE / 2, 8, WORLD.SIZE / 2); updateFx(dt); }
   renderer.render(scene, camera);
@@ -1273,4 +1323,4 @@ function loop() {
 }
 spawnPickups();
 loop();
-window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, EMOTES, openEmoteWheel, closeEmoteWheel, emoteSelectTick, getEmote: () => ({ open: emoteOpen, sel: emoteSel, emote: me.emote }), render: () => renderer.render(scene, camera) };
+window.__G = { me, cars, remotes, peds, traffic, cops, pickups, keys, scene, camera, renderer, WEAPONS, updatePlayer, updatePeds, updateCops, toggleCar, fire, driveCar, driveHeli, vehicleHits, crime, toggleMap, drawMap, mapcv, applyCheat, giveCar, giveBike, giveHeli, giveTank, giveBoat, enterVehicle, driveTank, driveBoat, fireTankShell, footCops, updateFootCops, losClear, settings, city, buildings, castHit, mouse, onMsg, updateCamera, rockets, updateRockets, fireRocket, fireHoming, spawnRocket, explode, targetPos, bestHomingTarget, updateLockOn, clearLock, homingTargets, updateRemotes, barrels, explodeBarrel, setWeapon, meleeAttack, WORDER, owns, stationCops, schoolKids, drawMinimap, buildingTopAt, driveHeli, updatePickups, updateTraffic, pickups, targetAlive, EMOTES, openEmoteWheel, closeEmoteWheel, emoteSelectTick, getEmote: () => ({ open: emoteOpen, sel: emoteSel, emote: me.emote }), resolveFoot, supportHeight, deployChute, closeChute, updateParachute, waterAnimated: () => !!waterUniforms, render: () => renderer.render(scene, camera) };

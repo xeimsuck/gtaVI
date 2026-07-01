@@ -129,6 +129,7 @@ export function makeCity(scene, seed = 7) {
     const lot = new THREE.Mesh(lotGeo, park ? parkMat : sidewalkMat); lot.rotation.x = -Math.PI / 2; lot.position.set(cx, 0.02, cz); lot.receiveShadow = true; g.add(lot);
 
     if (park) {
+      if (r() < 0.55) g.add(makeHill(cx + (r() - 0.5) * 10, cz + (r() - 0.5) * 10, 8 + r() * 7, 3 + r() * 3));   // grassy hill
       for (let i = 0; i < 4; i++) g.add(makeTree(cx + (r() - 0.5) * (B - RO) * 0.7, cz + (r() - 0.5) * (B - RO) * 0.7, r));
       spawns.push({ x: cx, z: cz });
     } else if (shop) {
@@ -158,7 +159,11 @@ export function makeCity(scene, seed = 7) {
       if (r() < 0.4) g.add(makeLamp(cx + (B - RO) / 2 + 2.2, cz - 7));
       if (r() < 0.22) g.add(makeHydrant(cx - (B - RO) / 2 - 1.6, cz + 6));
     }
-    if (coastal) for (let i = 0; i < 2; i++) g.add(makeTree(cx + (r() - 0.5) * B * 0.8, cz + (r() - 0.5) * B * 0.8, r));
+    if (coastal) { for (let i = 0; i < 2; i++) g.add(makeTree(cx + (r() - 0.5) * B * 0.8, cz + (r() - 0.5) * B * 0.8, r)); if (r() < 0.55) g.add(makeRock(cx + (r() - 0.5) * B, cz + (r() - 0.5) * B, 0.9 + r() * 1.6, r)); }
+  }
+  // mountains rising from the sea, off the outer coasts — scenery so the world isn't flat
+  for (const M of [{ x: 70, z: 180 }, { x: 140, z: 560 }, { x: 1000, z: 250 }, { x: 990, z: 820 }, { x: 640, z: 970 }, { x: 470, z: 60 }]) {
+    if (!isLand(M.x, M.z)) g.add(makeMountain(M.x, M.z, 40 + r() * 30, 60 + r() * 50));
   }
 
   for (let gx = 1; gx < G; gx++) for (let gz = 0; gz < G; gz++) if (land[gx - 1][gz] && land[gx][gz]) for (let t = -B / 2; t < B / 2; t += 8) { const a = new THREE.Mesh(boxGeo, lineMat); a.position.set(gx * B, 0.04, gz * B + B / 2 + t + 2); a.scale.set(0.4, 0.02, 3); g.add(a); }
@@ -308,6 +313,31 @@ export function makeBoat(color = 0xe8e8e8) {
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.8), STD(0x2a3550, { roughness: 0.3, metalness: 0.3 })); cabin.position.set(0, 1.05, -0.9); cabin.castShadow = true; g.add(cabin);
   const wind = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.42, 0.08), STD(0x16242e, { metalness: 0.4 })); wind.position.set(0, 1.12, -0.5); wind.rotation.x = -0.3; g.add(wind);
   return { group: g, wheels: [] };
+}
+
+// ---------- parachute ----------
+export function makeParachute() {
+  const g = new THREE.Group();
+  const cols = [0xe74c3c, 0xf1c40f, 0xffffff, 0x2980b9];
+  for (let i = 0; i < 4; i++) { const seg = new THREE.Mesh(new THREE.SphereGeometry(1.9, 6, 6, i / 4 * Math.PI * 2, Math.PI / 2, 0, Math.PI / 2), STD(cols[i], { side: THREE.DoubleSide, roughness: 0.8 })); seg.scale.y = 0.62; seg.castShadow = true; g.add(seg); }
+  for (let i = 0; i < 4; i++) { const a = i / 4 * Math.PI * 2; g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(Math.cos(a) * 1.6, -0.05, Math.sin(a) * 1.6), new THREE.Vector3(0, -2.7, 0)]), new THREE.LineBasicMaterial({ color: 0x222222 }))); }
+  return g;
+}
+
+// ---------- landscape (decorative) ----------
+export function makeHill(x, z, rad, h) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(rad, 12, 7, 0, Math.PI * 2, 0, Math.PI / 2), STD(0x4f8a46, { flatShading: true }));
+  m.scale.y = h / rad; m.position.set(x, -0.06, z); m.receiveShadow = true; m.castShadow = true; return m;
+}
+export function makeRock(x, z, size, r) {
+  const m = new THREE.Mesh(new THREE.IcosahedronGeometry(size, 0), STD(0x8a8f96, { flatShading: true }));
+  m.position.set(x, size * 0.45, z); m.rotation.set(r() * 3, r() * 3, r() * 3); m.scale.set(1, 0.6 + r() * 0.4, 1); m.castShadow = true; return m;
+}
+export function makeMountain(x, z, rad, h) {
+  const g = new THREE.Group();
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(rad, h, 7), STD(0x6f7360, { flatShading: true })); cone.position.y = h / 2; cone.castShadow = true; cone.receiveShadow = true; g.add(cone);
+  const snow = new THREE.Mesh(new THREE.ConeGeometry(rad * 0.36, h * 0.3, 7), STD(0xeef3f7, { flatShading: true })); snow.position.y = h * 0.85; g.add(snow);
+  g.position.set(x, 0, z); return g;
 }
 
 // ---------- tank ----------
